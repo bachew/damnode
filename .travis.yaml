@@ -1,0 +1,6 @@
+deploy:
+    provider: pypi
+    user: bachew
+    server: https://testpypi.python.org/pypi
+    on:
+        branch: dev0.1

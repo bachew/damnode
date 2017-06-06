@@ -1,0 +1,15 @@
+*.pyc
+__pycache__
+node_modules
+
+*.sublime-project
+*.sublime-workspace
+
+/*.egg-info
+/build
+/dist
+
+/node
+/tmp
+/vn2
+/vn3
