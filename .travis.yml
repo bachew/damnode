@@ -22,12 +22,13 @@ deploy:
     on:
       branch: master
       tags: false
+      condition: $TRAVIS_PYTHON_VERSION = "2.7"
   - provider: pypi
     distributions: sdist bdist_wheel
     user: bachew
     password:
       secure: 0Q2BXRgXxdvftM3gbMSecxXaf9x68UxJwMncfAWmQlnJd7Osl3w2ev93EwqlSHqDYdNCABh0omqWS9BqyiXZ4JHoioSubf/25buYRBm5uKmTcPKaTHOBzsrn/Wj12QbvRcwuAR/fPYFbHpeKm/HfTo88E7FcKScytHYduU3wNm478f5deh8YBixfSySVJxxwIubN6TVVZ9FrohAXJL1C0HnIetr5W/0rflFcSUIbosBWKG6cgeONSudt5nE+Fdr+0/hwYxpuY8MYerx8Apc0wKZCQ5fKo0HemLVC1TWRcViZPJQYzrTIRD/Hg0EYuUP/L+99dJUUZNFuP9YBnKKp71wy1lBLFKQULuHVWEkvg4ACS12p9uGLg3lmNp1tzVS4zny/ZaDkHok5jRUZ8AtfMBMXyjHMwaWvGOTT6RILwIUjKULtiYVssj6GRv2UWtD7R2c1ZOuROx9R4xQrSBSQXoYQQyt5vJqu6aFvVireTwsauTpHuy552rvhrljr0f6BJ0nDQxrg61IiCqn0v6n8h8g7IgzMFqNE1Tpz2NcFVsrF8gkMDYmeLuNL2sjoBF7seTZKYT0j85kjynVK9suZRipLkEpWODcB3TaM37Q6UHpttfy++JOL1pln5tk/EteJbJA2RRjiPk6e/r7vUj4yqLsFfnDX8AcY10kjqeVKUtY=
-    server: https://pypi.python.org/pypi
     on:
       branch: master
       tags: true
+      condition: $TRAVIS_PYTHON_VERSION = "2.7"
