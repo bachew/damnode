@@ -11,6 +11,7 @@ from setuptools import setup
 TAG = '0.1'
 DEV = True
 DEV_NUM = int(time.time())
+DEV_NUM = 1496746832
 
 
 def main():
