@@ -8,28 +8,27 @@ from os import path as osp
 from setuptools import setup
 
 
-TAG = '0.1'
-DEV = True
-DEV_NUM = int(time.time())
-DEV_NUM = 1496746832
-
-
 def main():
+    brtag = get_branch_or_tag()
+    version = get_version()
+    print('brtag:', brtag)
+    print('version:', version)
+
     readme = split_readme()
-    home_url = 'https://github.com/bachew/damnode/tree/{}'.format(get_tag_or_branch())
+    home_url = 'https://github.com/bachew/damnode/tree/{}'.format(brtag)
     go_home = textwrap.dedent('''\n
         Go to `home page <{}>`_ for documentation.
         '''.format(home_url))
     config = {
         'name': 'damnode',
-        'version': get_version(),
+        'version': version,
         'description': readme[1],
         'long_description': readme[2] + go_home,
         'license': 'MIT',
         'author': 'Chew Boon Aik',
         'author_email': 'bachew@gmail.com',
         'url': home_url,
-        'download_url': 'https://github.com/bachew/damnode/archive/{}.zip'.format(get_tag_or_branch()),
+        'download_url': 'https://github.com/bachew/damnode/archive/{}.zip'.format(brtag),
 
         'py_modules': ['damnode'],
         'install_requires': [
@@ -65,30 +64,24 @@ def main():
     setup(**config)
 
 
-def get_tag_or_branch():
-    if DEV:
-        return '{}.dev'.format(TAG)
 
-    return TAG
+def get_branch_or_tag():
+    value = os.environ.get('TRAVIS_TAG') or os.environ.get('TRAVIS_BRANCH')
+
+    if not value:
+        raise RuntimeError('Either TRAVIS_TAG or TRAVIS_BRANCH must be set')
+
+    return value
 
 
 def get_version():
-    buf = [TAG]
+    tag = os.environ.get('TRAVIS_TAG')
 
-    if DEV:
-        buf.append('.dev')
-        buf.append(str(get_dev_num()))
+    if tag:
+        return tag
 
-    return ''.join(buf)
-
-
-def get_dev_num():
-    num = os.environ.get('DAMNODE_DEV_NUM')
-
-    if not num:
-        num = DEV_NUM
-
-    return int(num)
+    dev_num = os.environ.get('TRAVIS_BUILD_ID') or int(time.time())
+    return '0.dev{}'.format(dev_num)
 
 
 def split_readme():
