@@ -11,6 +11,7 @@ from setuptools import setup
 def main():
     brtag = get_branch_or_tag()
     version = get_version()
+
     print('brtag:', brtag)
     print('version:', version)
 

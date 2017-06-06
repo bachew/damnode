@@ -12,6 +12,9 @@ install:
 
 script: python setup.py test
 
+after_script:
+- python setup.py check
+
 deploy:
   - provider: pypi
     user: bachew
