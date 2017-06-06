@@ -8,9 +8,9 @@ from os import path as osp
 from setuptools import setup
 
 
-DEV = True
 TAG = '0.1'
-IMPORT_TIME = int(time.time())
+DEV = True
+DEV_NUM = int(time.time())
 
 
 def main():
@@ -66,7 +66,7 @@ def main():
 
 def get_tag_or_branch():
     if DEV:
-        return 'dev{}'.format(TAG)
+        return '{}.dev'.format(TAG)
 
     return TAG
 
@@ -85,7 +85,7 @@ def get_dev_num():
     num = os.environ.get('DAMNODE_DEV_NUM')
 
     if not num:
-        num = IMPORT_TIME
+        num = DEV_NUM
 
     return int(num)
 
