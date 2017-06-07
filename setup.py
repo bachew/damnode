@@ -42,9 +42,10 @@ def main():
         ],
         'entry_points': {
             'console_scripts': [
-                'damnode=damnode:cli',
-                'node=damnode:node',
-                'npm=damnode:npm',
+                'damn=damnode:cmd_main',
+                'nrun=damnode:cmd_run',
+                'node=damnode:cmd_node',
+                'npm=damnode:cmd_npm',
             ],
         },
         'test_suite': 'testdamnode',

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import click
+import glob
 import os
 import platform
 import re
@@ -46,7 +47,7 @@ class DamNode(object):
         return self._session
 
     def http_get(self, url, **kwargs):
-        self.info('http_get: {}'.format(url))
+        self.info('GET {}'.format(url))
         return self.session.get(url, **kwargs)
 
     def get_url_dict(self, url, parse_title, ignore_parse_error=True):
@@ -118,6 +119,7 @@ class DamNode(object):
                 for (actual_platf, actual_arch, actual_fmt), pkg_url in six.iteritems(pkg_url_dict):
                     if match(actual_platf, platf) and match(actual_arch, arch) and match(actual_fmt, fmt):
                         yield pkg_url, actual_platf, actual_arch, actual_fmt
+                break
 
     def detect_platf_arch_fmt(self):
         return self.detect_platf(), self.detect_arch(), self.detect_fmt()
@@ -200,6 +202,27 @@ class DamNode(object):
         if self.installed:
             raise AlreadyInstalledError('Node already installed in {!r}'.format(str(self.node_dir)))
 
+    def list_bin(self):
+        paths = []
+        paths.extend(glob.glob(str(self.node_dir / 'bin/*')))
+        paths.extend(glob.glob(str(self.node_dir / 'lib/node_modules/*/bin/*')))
+        return paths
+
+    def search_bin(self, name):
+        paths = []
+        path = self.node_dir / 'bin' / name
+
+        if path.exists():
+            paths.append(path)
+
+        for mod_bin_dir in glob.glob(str(self.node_dir / 'lib/node_modules/*/bin')):
+            mod_bin = Path(mod_bin_dir, name)
+
+            if mod_bin.exists():
+                paths.append(mod_bin)
+
+        return paths
+
 
 class AlreadyInstalledError(Exception):
     pass
@@ -248,13 +271,30 @@ def temp_dir():
 damn = CliDamNode()
 
 
+def main(args):
+    cmd_main(args, standalone=False)
+
+
+# TODO: merge into install(), usage: 'damn install -l'?
+def list_packages(args):
+    cmd_list(args, standalone=False)
+
+
+def install(args):
+    cmd_install(args, standalone=False)
+
+
+def uninstall(args):
+    cmd_uninstall(args, standalone=False)
+
+
 @click.group()
 @click.help_option('-h', '--help')
-def cli():
+def cmd_main():
     pass
 
 
-@cli.command('list')
+@cmd_main.command('list')
 @click.help_option('-h', '--help')
 @click.argument('version',
                  metavar='VERSION',
@@ -268,29 +308,32 @@ def cli():
 @click.option('-f', 'fmt',
               metavar='FMT',
               help='File format (e.g. tar.gz, zip)')
-def list_packages(version, platf, arch, fmt):
+@click.option('--detect/--no-detect',
+              default=True,
+              help='Detect platf, arch and fmt, default on')
+def cmd_list(version, platf, arch, fmt, detect):
     '''
     List Node packages
 
     VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6)
     '''
-    detect = True  # TODO: --no-detect
-    # TODO: -v/--verbose
-
     det_platf = damn.detect_platf()
     det_arch = damn.detect_arch()
     det_fmt = damn.detect_fmt()
-
-    info('Detected {} {} {}'.format(det_platf, det_arch, det_fmt))
 
     if detect:
         platf = platf or det_platf
         arch = arch or det_arch
         fmt = fmt or det_fmt
 
+    info('platf: {}'.format(platf))
+    info('arch: {}'.format(arch))
+    info('fmt: {}'.format(fmt))
+
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
+        info('No packages found, version too low or too high?')
         return
 
     all_platfs = set()
@@ -309,29 +352,27 @@ def list_packages(version, platf, arch, fmt):
     info('all_fmts: {}'.format(lst(all_fmts)))
 
 
-@cli.command()
+@cmd_main.command('install')
 @click.help_option('-h', '--help')
 @click.argument('version',
                  metavar='VERSION',
                  type=VersionType())
-def install(version):
+def cmd_install(version):
     '''
     Install Node
 
     VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6), latest
     version will be installed if it's partial.
     '''
-
     if damn.installed:
-        error("Node is already installed, you can reinstall by uninstalling it first using 'damnode uninstall'")
+        error("Node is already installed, you can reinstall by uninstalling it first using 'damn uninstall'")
         raise SystemExit(1)
 
     platf, arch, fmt = damn.detect_platf_arch_fmt()
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
-        # TODO: error() with proper message
-        info('Cannot find {} package for {}'.format(version, (platf, arch, fmt)))
+        error("Couldn not find suitable package install, run 'damn list' to find out why")
         raise SystemExit(1)
 
     pkg_url = pkgs[0][0]
@@ -344,9 +385,9 @@ def install(version):
     # npm config set scripts-prepend-node-path false after install
 
 
-@cli.command()
+@cmd_main.command('uninstall')
 @click.help_option('-h', '--help')
-def uninstall():
+def cmd_uninstall():
     '''
     Uninstall Node.
     '''
@@ -355,34 +396,56 @@ def uninstall():
     shutil.rmtree(node_dir)
 
 
-def node():
-    redirect('node', set_node_path=True)
-
-
-def npm():
-    redirect('npm')
-
-
-def redirect(prog, set_node_path=False):
+def run(args, standalone=False, env=None):
+    # TODO: refactor and handle exception
     if not damn.installed:
-        error("Node is not yet installed, run 'damnode install <version>' to install it")
+        error("Node is not yet installed, run 'damn install <version>' to install it")
         raise SystemExit(1)
 
-    prog_path = damn.node_dir / 'bin' / prog
-    cmd = [str(prog_path)] + sys.argv[1:]
-    kwargs = {}
+    bin_dir = damn.node_dir / 'bin'
 
-    if set_node_path:
-        kwargs['env'] = {
-            'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
-        }
+    if not args:
+        for x in os.listdir(str(bin_dir)):
+            info(x)
+        raise SystemExit(1)
+
+    prog = bin_dir / args[0]
+    cmd = [str(prog)] + args[1:]
 
     try:
-        subprocess.check_call(cmd, **kwargs)
+        subprocess.check_call(cmd, env=env)
     except subprocess.CalledProcessError as e:
-        raise SystemExit(e.returncode)
-    else:
+        if standalone:
+            raise SystemExit(e.returncode)
+        else:
+            raise
+
+    if standalone:
         raise SystemExit
+
+
+def node(args, standalone=False):
+    env = {
+        'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
+    }
+    run(['node'] + args, standalone=standalone, env=env)
+
+
+def npm(args, standalone=False):
+    run(['npm'] + args, standalone=standalone)
+
+
+def cmd_run():
+    run(sys.argv[1:], standalone=True)
+
+
+def cmd_node():
+    node(sys.argv[1:], standalone=True)
+
+
+def cmd_npm():
+    npm(sys.argv[1:], standalone=True)
+
 
 
 if __name__ == '__main__':

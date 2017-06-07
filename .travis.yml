@@ -33,3 +33,5 @@ deploy:
       branch: master
       tags: true
       condition: $TRAVIS_PYTHON_VERSION = "2.7"
+
+# TODO: deploy Python 3.x wheel packages
