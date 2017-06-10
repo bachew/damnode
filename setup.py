@@ -2,6 +2,7 @@
 from __future__ import print_function
 import os
 import re
+import subprocess
 import textwrap
 import time
 from os import path as osp
@@ -10,11 +11,6 @@ from setuptools import setup
 
 def main():
     brtag = get_branch_or_tag()
-    version = get_version()
-
-    print('brtag:', brtag)
-    print('version:', version)
-
     readme = split_readme()
     home_url = 'https://github.com/bachew/damnode/tree/{}'.format(brtag)
     go_home = textwrap.dedent('''\n
@@ -22,7 +18,7 @@ def main():
         '''.format(home_url))
     config = {
         'name': 'damnode',
-        'version': version,
+        'version': get_version(),
         'description': readme[1],
         'long_description': readme[2] + go_home,
         'license': 'MIT',
@@ -32,6 +28,9 @@ def main():
         'download_url': 'https://github.com/bachew/damnode/archive/{}.zip'.format(brtag),
 
         'py_modules': ['damnode'],
+        'setup_requires': [
+            'wheel',
+        ],
         'install_requires': [
             'beautifulsoup4',
             'cachecontrol[filecache]',
@@ -43,7 +42,7 @@ def main():
         'entry_points': {
             'console_scripts': [
                 'damn=damnode:cmd_main',
-                'nrun=damnode:cmd_run',
+                'nrun=damnode:cmd_nrun',
                 'node=damnode:cmd_node',
                 'npm=damnode:cmd_npm',
             ],
@@ -71,7 +70,7 @@ def get_branch_or_tag():
     value = os.environ.get('TRAVIS_TAG') or os.environ.get('TRAVIS_BRANCH')
 
     if not value:
-        raise RuntimeError('Either TRAVIS_TAG or TRAVIS_BRANCH must be set')
+        value = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).strip()
 
     return value
 
@@ -91,10 +90,7 @@ def split_readme():
     readme_file = osp.join(base_dir, 'README.md')
 
     with open(readme_file) as f:
-        readme = f.read()
-
-    if '\r' in readme:
-        raise RuntimeError(r'{!r} contains {!r}'.format(readme_file, '\r'))
+        readme = f.read().replace('\r', '')
 
     parts = re.split(r'\n{2,}', readme)
     solid_parts = []

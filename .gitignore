@@ -5,6 +5,7 @@ node_modules
 *.sublime-project
 *.sublime-workspace
 
+/.eggs
 /*.egg-info
 /build
 /dist

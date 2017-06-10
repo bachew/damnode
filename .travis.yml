@@ -8,6 +8,7 @@ python:
 - '3.6'
 
 install:
+- python setup.py --url --version
 - pip install .
 
 script: python setup.py test
@@ -33,5 +34,3 @@ deploy:
       branch: master
       tags: true
       condition: $TRAVIS_PYTHON_VERSION = "2.7"
-
-# TODO: deploy Python 3.x wheel packages

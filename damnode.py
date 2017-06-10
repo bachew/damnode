@@ -380,23 +380,27 @@ def cmd_install(version):
     with damn.download_package(pkg_url) as pkg_file:
         damn.install_package(pkg_file)
 
-    # TODO: To prevent the following warning:
-    # npm WARN lifecycle npm is using /home/bachew/alpha/damnode/data/node/bin/node but there is no node binary in the current PATH. Use the `--scripts-prepend-node-path` option to include the path for the node binary npm was executed with.
-    # npm config set scripts-prepend-node-path false after install
+    # To prevent warning: "npm is using <node>/bin/node but there is no node binary in the current PATH"
+    nrun(['npm', 'config', 'set', 'scripts-prepend-node-path', 'false'])
 
 
 @cmd_main.command('uninstall')
+@click.option('--yes', is_flag=True, help='Confirm uninstallation')
 @click.help_option('-h', '--help')
-def cmd_uninstall():
+def cmd_uninstall(yes):
     '''
     Uninstall Node.
     '''
     node_dir = str(damn.node_dir)
-    info('Uninstalling {!r}'.format(node_dir))
+
+    if not yes:
+        click.confirm('This will remove {!r}, are you sure?'.format(node_dir, abort=True))
+
     shutil.rmtree(node_dir)
+    click.echo('{!r} removed'.format(node_dir))
 
 
-def run(args, standalone=False, env=None):
+def nrun(args, standalone=False, env=None):
     # TODO: refactor and handle exception
     if not damn.installed:
         error("Node is not yet installed, run 'damn install <version>' to install it")
@@ -428,15 +432,15 @@ def node(args, standalone=False):
     env = {
         'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
     }
-    run(['node'] + args, standalone=standalone, env=env)
+    nrun(['node'] + args, standalone=standalone, env=env)
 
 
 def npm(args, standalone=False):
-    run(['npm'] + args, standalone=standalone)
+    nrun(['npm'] + args, standalone=standalone)
 
 
-def cmd_run():
-    run(sys.argv[1:], standalone=True)
+def cmd_nrun():
+    nrun(sys.argv[1:], standalone=True)
 
 
 def cmd_node():
@@ -447,6 +451,5 @@ def cmd_npm():
     npm(sys.argv[1:], standalone=True)
 
 
-
 if __name__ == '__main__':
-    cli()
+    cmd_main()
