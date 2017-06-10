@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import click
+import errno
 import glob
 import os
 import platform
@@ -163,14 +164,16 @@ class DamNode(object):
     @contextmanager
     def download_file(self, url):
         resp = self.http_get(url, stream=True)
+        total_size = resp.headers.get('content-length')
 
-        with temp_dir() as tdir:
+        with _temp_dir() as tdir:
             path = tdir / Path(url).name
+            content_length = int(resp.headers['content-length'])
 
-            # TODO: show progress
-            with open(str(path), 'wb') as f:
+            with open(str(path), 'wb') as f, click.progressbar(length=content_length) as progress:
                 for chunk in resp.iter_content(chunk_size=self.chunk_size):
                     f.write(chunk)
+                    progress.update(self.chunk_size)
 
             yield path
 
@@ -179,7 +182,7 @@ class DamNode(object):
         self.check_not_installed()
         self.info('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
 
-        with temp_dir() as tdir:
+        with _temp_dir() as tdir:
             if pkg_file.suffix == '.gz':  # tar.gz
                 with tarfile.open(str(pkg_file), 'r|gz') as tar_file:
                     tar_file.extractall(str(tdir))
@@ -201,27 +204,6 @@ class DamNode(object):
     def check_not_installed(self):
         if self.installed:
             raise AlreadyInstalledError('Node already installed in {!r}'.format(str(self.node_dir)))
-
-    def list_bin(self):
-        paths = []
-        paths.extend(glob.glob(str(self.node_dir / 'bin/*')))
-        paths.extend(glob.glob(str(self.node_dir / 'lib/node_modules/*/bin/*')))
-        return paths
-
-    def search_bin(self, name):
-        paths = []
-        path = self.node_dir / 'bin' / name
-
-        if path.exists():
-            paths.append(path)
-
-        for mod_bin_dir in glob.glob(str(self.node_dir / 'lib/node_modules/*/bin')):
-            mod_bin = Path(mod_bin_dir, name)
-
-            if mod_bin.exists():
-                paths.append(mod_bin)
-
-        return paths
 
 
 class AlreadyInstalledError(Exception):
@@ -260,12 +242,22 @@ def error(msg):
 
 
 @contextmanager
-def temp_dir():
+def _temp_dir():
     dirname = tempfile.mkdtemp()
     try:
         yield Path(dirname)
     finally:
-        shutil.rmtree(dirname)
+        _rmtree(dirname)
+
+
+def _rmtree(path):
+    try:
+        shutil.rmtree(path)
+    except OSError as e:
+        if e.errno == errno.ENOENT:
+            pass  # does not exist
+        else:
+            raise
 
 
 damn = CliDamNode()
@@ -365,7 +357,7 @@ def cmd_install(version):
     version will be installed if it's partial.
     '''
     if damn.installed:
-        error("Node is already installed, you can reinstall by uninstalling it first using 'damn uninstall'")
+        error("Node is already installed, you uninstall it by running 'damn uninstall'")
         raise SystemExit(1)
 
     platf, arch, fmt = damn.detect_platf_arch_fmt()
@@ -396,7 +388,7 @@ def cmd_uninstall(yes):
     if not yes:
         click.confirm('This will remove {!r}, are you sure?'.format(node_dir, abort=True))
 
-    shutil.rmtree(node_dir)
+    _rmtree(node_dir)
     click.echo('{!r} removed'.format(node_dir))
 
 
