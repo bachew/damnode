@@ -1,5 +1,6 @@
 language: python
 
+# Keep in sync with setup.py classifiers
 python:
 - '2.7'
 - '3.3'

@@ -342,14 +342,14 @@ def cmd_install(version):
     damn = DamNode()
 
     if damn.installed:
-        error("Node is already installed, you uninstall it by running 'damn uninstall'")
+        error("Node is already installed, you uninstall it by running 'damnode uninstall'")
         raise SystemExit(1)
 
     platf, arch, fmt = damn.detect_platf_arch_fmt()
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
-        error("Couldn not find suitable package install, run 'damn list' to find out why")
+        error("Couldn not find suitable package install, run 'damnode list' to find out why")
         raise SystemExit(1)
 
     pkg_url = pkgs[0][0]
@@ -383,7 +383,7 @@ def nrun(args, standalone=False, env=None):
     damn = DamNode()
 
     if not damn.installed:
-        error("Node is not yet installed, run 'damn install <version>' to install it")
+        error("Node is not yet installed, run 'damnode install <version>' to install it")
         raise SystemExit(1)
 
     bin_dir = damn.node_dir / 'bin'

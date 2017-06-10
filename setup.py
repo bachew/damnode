@@ -41,7 +41,7 @@ def main():
         ],
         'entry_points': {
             'console_scripts': [
-                'damn=damnode:cmd_main',
+                'damnode=damnode:cmd_main',
                 'nrun=damnode:cmd_nrun',
                 'node=damnode:cmd_node',
                 'npm=damnode:cmd_npm',
@@ -56,12 +56,15 @@ def main():
             'License :: OSI Approved :: MIT License',
             'Operating System :: OS Independent',
             'Programming Language :: Python :: 2',
-            'Programming Language :: Python :: 2.7',
             'Programming Language :: Python :: 3',
+
+            # Keep in sync with .travis.yml python versions
+            'Programming Language :: Python :: 2.7',
             'Programming Language :: Python :: 3.3',
             'Programming Language :: Python :: 3.4',
             'Programming Language :: Python :: 3.5',
             'Programming Language :: Python :: 3.6',
+
             'Topic :: Software Development :: Build Tools',
             'Topic :: Utilities',
 

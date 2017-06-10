@@ -1,10 +1,12 @@
 #!/bin/bash -ex
 
+# TODO: convert to portable testinstall.py, need to run on Windows as well
+
 python setup.py test
 
-damn uninstall --yes
-damn list
-damn install
+damnode uninstall --yes
+damnode list
+damnode install
 
 [[ "`nrun node --version`" = "`node --version`" ]]
 [[ "`nrun npm --version`" = "`npm --version`" ]]
