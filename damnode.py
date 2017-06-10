@@ -94,7 +94,7 @@ class DamNode(object):
 
     def iter_packages(self, ver, platf, arch, fmt):
         def version_match(actual_ver, ver):
-            if ver is None:
+            if not ver:
                 return True
 
             if not match(actual_ver[0], ver[0]):
@@ -106,7 +106,7 @@ class DamNode(object):
             return match(actual_ver[2], ver[2])
 
         def match(actual_val, val):
-            return val is None or val == actual_val
+            return not val or val == actual_val
 
         ver_url_dict = self.get_version_url_dict()
 
@@ -211,12 +211,6 @@ class VersionType(ParamType):
         return _parse_version(value)
 
 
-# TODO: merge into install(), usage: 'damn install -l'?
-# FIXME: doesn't list all versions
-def list_packages(args):
-    cmd_list(args, standalone=False)
-
-
 def install(args):
     cmd_install(args, standalone=False)
 
@@ -243,6 +237,7 @@ def cmd_main():
     pass
 
 
+# TODO: merge into cmd_install()
 @cmd_main.command('list')
 @click.help_option('-h', '--help')
 @click.argument('version',
@@ -305,9 +300,9 @@ def cmd_list(version, platf, arch, fmt, detect):
 @cmd_main.command('install')
 @click.help_option('-h', '--help')
 @click.argument('version',
-                 metavar='VERSION',
                  required=False,
                  type=VersionType())
+# TODO: add -l/--list, -p/--platform and -a/--architecture options
 def cmd_install(version):
     '''
     Install Node
@@ -318,13 +313,14 @@ def cmd_install(version):
     damn = DamNode()
 
     if damn.installed:
-        raise DamNodeError("Node is already installed, you uninstall it by running 'damnode uninstall'")
+        raise DamNodeError("Node is already installed, you can uninstall it by running 'damnode uninstall'")
 
     platf, arch, fmt = damn.detect_platf_arch_fmt()
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
-        raise DamNodeError("Couldn not find suitable package install, run 'damnode list' to find out why")
+        # TODO: add version arg if specified
+        raise DamNodeError("Couldn not find suitable package install, run 'damnode -l -p \'\' -a \'\'' to find out why")
 
     pkg_url = pkgs[0][0]
 
@@ -390,8 +386,11 @@ def cmd_nrun(use_global, node_bin):
     try:
         subprocess.check_call(cmd, env=env)
     # TODO: handle ENOENT, print list like missing node_bin
-    except CalledProcessError:
-        raise DamNodeError('')  # TODO: fail without stack trace and 'Error: '
+    except CalledProcessError as e:
+        cmdline = subprocess.list2cmdline(cmd)
+        e2 = ClickException('{!r} failed with exit code {!r}'.format(cmdline, e.returncode))
+        e2.exit_code = e.returncode
+        raise e2
 
 
 def cmd_node():
