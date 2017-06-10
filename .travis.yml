@@ -11,7 +11,7 @@ install:
 - python setup.py --url --version
 - pip install .
 
-script: python setup.py test
+script: ./test
 
 deploy:
   - provider: pypi

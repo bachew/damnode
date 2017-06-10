@@ -1,0 +1,14 @@
+#!/bin/bash -ex
+
+python setup.py test
+
+damn uninstall --yes
+damn list
+damn install
+
+[[ "`nrun node --version`" = "`node --version`" ]]
+[[ "`nrun npm --version`" = "`npm --version`" ]]
+
+# TODO: also install old version 4.x
+
+echo "Testing completed successfully!"

@@ -14,13 +14,13 @@ def main():
     readme = split_readme()
     home_url = 'https://github.com/bachew/damnode/tree/{}'.format(brtag)
     go_home = textwrap.dedent('''\n
-        Go to `home page <{}>`_ for documentation.
+        Go to `project page <{}#damnode>`_ for more info.
         '''.format(home_url))
     config = {
         'name': 'damnode',
         'version': get_version(),
-        'description': readme[1],
-        'long_description': readme[2] + go_home,
+        'description': readme[2],
+        'long_description': readme[3] + go_home,
         'license': 'MIT',
         'author': 'Chew Boon Aik',
         'author_email': 'bachew@gmail.com',

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import click
 import errno
-import glob
 import os
 import platform
 import re
@@ -35,9 +34,6 @@ class DamNode(object):
             getattr(self, k)
             setattr(self, k, v)
 
-    def info(self, msg):
-        pass
-
     @property
     def session(self):
         if not getattr(self, '_session', None):
@@ -48,7 +44,7 @@ class DamNode(object):
         return self._session
 
     def http_get(self, url, **kwargs):
-        self.info('GET {}'.format(url))
+        click.echo('GET {}'.format(url))
         return self.session.get(url, **kwargs)
 
     def get_url_dict(self, url, parse_title, ignore_parse_error=True):
@@ -179,8 +175,7 @@ class DamNode(object):
 
     def install_package(self, pkg_file):
         pkg_file = Path(pkg_file)
-        self.check_not_installed()
-        self.info('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
+        click.echo('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
 
         with _temp_dir() as tdir:
             if pkg_file.suffix == '.gz':  # tar.gz
@@ -194,25 +189,13 @@ class DamNode(object):
                 raise NotImplementedError('File format not supported: {}'.format(pkg_file.name))
 
             extracted_node_dir = tdir / os.listdir(str(tdir))[0]
-            self.check_not_installed()  # last minute check
+
+            _rmtree(str(self.node_dir))
             shutil.move(str(extracted_node_dir), str(self.node_dir))
 
     @property
     def installed(self):
         return self.node_dir.exists()
-
-    def check_not_installed(self):
-        if self.installed:
-            raise AlreadyInstalledError('Node already installed in {!r}'.format(str(self.node_dir)))
-
-
-class AlreadyInstalledError(Exception):
-    pass
-
-
-class CliDamNode(DamNode):
-    def info(self, msg):
-        info(msg)
 
 
 class VersionType(click.ParamType):
@@ -260,14 +243,12 @@ def _rmtree(path):
             raise
 
 
-damn = CliDamNode()
-
-
 def main(args):
     cmd_main(args, standalone=False)
 
 
 # TODO: merge into install(), usage: 'damn install -l'?
+# FIXME: doesn't list all versions
 def list_packages(args):
     cmd_list(args, standalone=False)
 
@@ -309,6 +290,7 @@ def cmd_list(version, platf, arch, fmt, detect):
 
     VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6)
     '''
+    damn = DamNode()
     det_platf = damn.detect_platf()
     det_arch = damn.detect_arch()
     det_fmt = damn.detect_fmt()
@@ -348,6 +330,7 @@ def cmd_list(version, platf, arch, fmt, detect):
 @click.help_option('-h', '--help')
 @click.argument('version',
                  metavar='VERSION',
+                 required=False,
                  type=VersionType())
 def cmd_install(version):
     '''
@@ -356,6 +339,8 @@ def cmd_install(version):
     VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6), latest
     version will be installed if it's partial.
     '''
+    damn = DamNode()
+
     if damn.installed:
         error("Node is already installed, you uninstall it by running 'damn uninstall'")
         raise SystemExit(1)
@@ -383,6 +368,7 @@ def cmd_uninstall(yes):
     '''
     Uninstall Node.
     '''
+    damn = DamNode()
     node_dir = str(damn.node_dir)
 
     if not yes:
@@ -394,6 +380,8 @@ def cmd_uninstall(yes):
 
 def nrun(args, standalone=False, env=None):
     # TODO: refactor and handle exception
+    damn = DamNode()
+
     if not damn.installed:
         error("Node is not yet installed, run 'damn install <version>' to install it")
         raise SystemExit(1)
@@ -421,6 +409,8 @@ def nrun(args, standalone=False, env=None):
 
 
 def node(args, standalone=False):
+    damn = DamNode()
+    # TODO: should have nrun -g option instead of inserting NODE_PATH here
     env = {
         'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
     }
