@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 from unittest import TestCase
-from damnode import DamNode, parse_version
+from damnode import DamNode, _parse_version
 
 
 class Test(TestCase):
     def setUp(self):
         self.damn = DamNode()
 
-    def test_parse_version(self):
+    def test__parse_version(self):
         def test(expected, ver_str, **kwargs):
-            actual = parse_version(ver_str, **kwargs)
+            actual = _parse_version(ver_str, **kwargs)
             self.assertEqual(expected, actual)
 
         test((4, 0, 0), '4.0.0')
@@ -18,12 +18,12 @@ class Test(TestCase):
         test((7, 0, None), 'v7.0')
         test((8, None, None), ' 8 ', prefix=r'\s*', suffix=r'\s*')
 
-    def test_parse_version_value_error(self):
+    def test__parse_version_value_error(self):
         def test(message, ver_str, **kwargs):
             self.assertRaisesRegexp(
                 ValueError,
                 message,
-                parse_version, ver_str, **kwargs)
+                _parse_version, ver_str, **kwargs)
 
         test(r'^Must match', 'node-v4')
 

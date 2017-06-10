@@ -14,12 +14,14 @@ import tarfile
 from argparse import ArgumentParser
 from cachecontrol import CacheControl
 from cachecontrol.caches.file_cache import FileCache
+from click import BadParameter, ClickException, echo, ParamType
 from collections import OrderedDict
 from contextlib import contextmanager
 from bs4 import BeautifulSoup
 from os import path as osp
-from pathlib2 import Path
+from pathlib2 import Path  # TODO: remove usage
 from six.moves.urllib import parse as urlparse
+from subprocess import CalledProcessError
 from zipfile import ZipFile
 
 
@@ -44,7 +46,7 @@ class DamNode(object):
         return self._session
 
     def http_get(self, url, **kwargs):
-        click.echo('GET {}'.format(url))
+        echo('GET {}'.format(url))  # TODO: option to turn off
         return self.session.get(url, **kwargs)
 
     def get_url_dict(self, url, parse_title, ignore_parse_error=True):
@@ -70,7 +72,7 @@ class DamNode(object):
     def get_version_url_dict(self):
 
         def parse_title(title):
-            ver = parse_version(title, suffix='/?$')
+            ver = _parse_version(title, suffix='/?$')
 
             if ver < self.min_version:
                 raise ValueError
@@ -175,7 +177,7 @@ class DamNode(object):
 
     def install_package(self, pkg_file):
         pkg_file = Path(pkg_file)
-        click.echo('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
+        echo('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
 
         with _temp_dir() as tdir:
             if pkg_file.suffix == '.gz':  # tar.gz
@@ -198,53 +200,15 @@ class DamNode(object):
         return self.node_dir.exists()
 
 
-class VersionType(click.ParamType):
+class DamNodeError(ClickException):
+    pass
+
+
+class VersionType(ParamType):
     name = 'version'
 
     def convert(self, value, param, ctx):
-        return parse_version(value)
-
-
-def parse_version(ver_str, prefix=r'^', suffix=r'$'):
-    pattern = prefix + r'v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?' + suffix
-    m = re.match(pattern, ver_str)
-
-    if not m:
-        raise ValueError('Must match {}'.format(pattern))
-
-    opt_int = lambda s: None if s is None else int(s)
-    return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
-
-
-def info(msg):
-    click.echo(str(msg))
-
-
-def error(msg):
-    click.echo('ERROR: {}'.format(msg), err=True)
-
-
-@contextmanager
-def _temp_dir():
-    dirname = tempfile.mkdtemp()
-    try:
-        yield Path(dirname)
-    finally:
-        _rmtree(dirname)
-
-
-def _rmtree(path):
-    try:
-        shutil.rmtree(path)
-    except OSError as e:
-        if e.errno == errno.ENOENT:
-            pass  # does not exist
-        else:
-            raise
-
-
-def main(args):
-    cmd_main(args, standalone=False)
+        return _parse_version(value)
 
 
 # TODO: merge into install(), usage: 'damn install -l'?
@@ -259,6 +223,18 @@ def install(args):
 
 def uninstall(args):
     cmd_uninstall(args, standalone=False)
+
+
+def nrun(args):
+    cmd_nrun(args, standalone=False)
+
+
+def node(args):
+    nrun(['node'] + list(args))
+
+
+def npm(args):
+    nrun(['npm'] + list(args))
 
 
 @click.group()
@@ -300,14 +276,14 @@ def cmd_list(version, platf, arch, fmt, detect):
         arch = arch or det_arch
         fmt = fmt or det_fmt
 
-    info('platf: {}'.format(platf))
-    info('arch: {}'.format(arch))
-    info('fmt: {}'.format(fmt))
+    echo('platf: {}'.format(platf))
+    echo('arch: {}'.format(arch))
+    echo('fmt: {}'.format(fmt))
 
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
-        info('No packages found, version too low or too high?')
+        echo('No packages found, version too low or too high?')
         return
 
     all_platfs = set()
@@ -318,12 +294,12 @@ def cmd_list(version, platf, arch, fmt, detect):
         all_platfs.add(platf)
         all_archs.add(arch)
         all_fmts.add(fmt)
-        info(pkg_url)
+        echo(pkg_url)
 
     lst = lambda s: ', '.join(sorted(s))
-    info('all_platfs: {}'.format(lst(all_platfs)))
-    info('all_archs: {}'.format(lst(all_archs)))
-    info('all_fmts: {}'.format(lst(all_fmts)))
+    echo('all_platfs: {}'.format(lst(all_platfs)))
+    echo('all_archs: {}'.format(lst(all_archs)))
+    echo('all_fmts: {}'.format(lst(all_fmts)))
 
 
 @cmd_main.command('install')
@@ -342,15 +318,13 @@ def cmd_install(version):
     damn = DamNode()
 
     if damn.installed:
-        error("Node is already installed, you uninstall it by running 'damnode uninstall'")
-        raise SystemExit(1)
+        raise DamNodeError("Node is already installed, you uninstall it by running 'damnode uninstall'")
 
     platf, arch, fmt = damn.detect_platf_arch_fmt()
     pkgs = list(damn.iter_packages(version, platf, arch, fmt))
 
     if not pkgs:
-        error("Couldn not find suitable package install, run 'damnode list' to find out why")
-        raise SystemExit(1)
+        raise DamNodeError("Couldn not find suitable package install, run 'damnode list' to find out why")
 
     pkg_url = pkgs[0][0]
 
@@ -375,62 +349,87 @@ def cmd_uninstall(yes):
         click.confirm('This will remove {!r}, are you sure?'.format(node_dir, abort=True))
 
     _rmtree(node_dir)
-    click.echo('{!r} removed'.format(node_dir))
+    echo('{!r} removed'.format(node_dir))
 
 
-def nrun(args, standalone=False, env=None):
-    # TODO: refactor and handle exception
+@click.command(context_settings=dict(ignore_unknown_options=True))
+@click.help_option('-h', '--help')
+@click.option('-g', 'use_global', is_flag=True, help='Include global node_modules')  # TODO: full path
+@click.argument('node_bin', nargs=-1, type=click.UNPROCESSED)
+def cmd_nrun(use_global, node_bin):
     damn = DamNode()
 
     if not damn.installed:
-        error("Node is not yet installed, run 'damnode install <version>' to install it")
-        raise SystemExit(1)
+        raise DamNodeError("Node is not yet installed, run 'damnode install' to install it")
 
     bin_dir = damn.node_dir / 'bin'
 
-    if not args:
-        for x in os.listdir(str(bin_dir)):
-            info(x)
-        raise SystemExit(1)
+    if not node_bin:
+        msg = [
+            'node_bin is required\n',
+            'Please specified one:'
+        ]
 
-    prog = bin_dir / args[0]
-    cmd = [str(prog)] + args[1:]
+        for bin_name in os.listdir(str(bin_dir)):
+            msg.append('\n  ')
+            msg.append(bin_name)
+
+        raise click.BadParameter(''.join(msg))
+
+    prog = bin_dir / node_bin[0]
+    cmd = [str(prog)]
+    cmd.extend(node_bin[1:])
+
+    env = None
+
+    if use_global:
+        env = {
+            'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
+        }
 
     try:
         subprocess.check_call(cmd, env=env)
-    except subprocess.CalledProcessError as e:
-        if standalone:
-            raise SystemExit(e.returncode)
-        else:
-            raise
-
-    if standalone:
-        raise SystemExit
-
-
-def node(args, standalone=False):
-    damn = DamNode()
-    # TODO: should have nrun -g option instead of inserting NODE_PATH here
-    env = {
-        'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
-    }
-    nrun(['node'] + args, standalone=standalone, env=env)
-
-
-def npm(args, standalone=False):
-    nrun(['npm'] + args, standalone=standalone)
-
-
-def cmd_nrun():
-    nrun(sys.argv[1:], standalone=True)
+    # TODO: handle ENOENT, print list like missing node_bin
+    except CalledProcessError:
+        raise DamNodeError('')  # TODO: fail without stack trace and 'Error: '
 
 
 def cmd_node():
-    node(sys.argv[1:], standalone=True)
+    cmd_nrun(['node'] + sys.argv[1:])
 
 
 def cmd_npm():
-    npm(sys.argv[1:], standalone=True)
+    cmd_nrun(['npm'] + sys.argv[1:])
+
+
+def _parse_version(ver_str, prefix=r'^', suffix=r'$'):
+    pattern = prefix + r'v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?' + suffix
+    m = re.match(pattern, ver_str)
+
+    if not m:
+        raise ValueError('Must match {}'.format(pattern))
+
+    opt_int = lambda s: None if s is None else int(s)
+    return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
+
+
+@contextmanager
+def _temp_dir():
+    dirname = tempfile.mkdtemp()
+    try:
+        yield Path(dirname)
+    finally:
+        _rmtree(dirname)
+
+
+def _rmtree(path):
+    try:
+        shutil.rmtree(path)
+    except OSError as e:
+        if e.errno == errno.ENOENT:
+            pass  # does not exist
+        else:
+            raise
 
 
 if __name__ == '__main__':
