@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import click
 import errno
+import functools
 import os
 import platform
 import re
@@ -12,24 +13,36 @@ import sys
 import tempfile
 import tarfile
 from argparse import ArgumentParser
-from cachecontrol import CacheControl
+from cachecontrol import CacheControl  # TODO: not universal
 from cachecontrol.caches.file_cache import FileCache
 from click import BadParameter, ClickException, echo, ParamType
 from collections import OrderedDict
 from contextlib import contextmanager
 from bs4 import BeautifulSoup
 from os import path as osp
-from pathlib2 import Path  # TODO: remove usage
 from six.moves.urllib import parse as urlparse
 from subprocess import CalledProcessError
 from zipfile import ZipFile
+
+
+def _cached_property(method):
+    @functools.wraps(method)
+    def wrapped(self):
+        key = '_{}'.format(method.__name__)
+
+        if not hasattr(self, key):
+            setattr(self, key, method(self))
+
+        return getattr(self, key)
+
+    return property(wrapped)
 
 
 class DamNode(object):
     index_url = 'https://nodejs.org/dist/'
     min_version = (4, 0, 0)
     chunk_size = 1024 * 10
-    node_dir = Path(__file__).parent / 'node'
+    node_dir = osp.join(osp.dirname(__file__), 'node')
 
     def __init__(self, **kwargs):
         for k, v in six.iteritems(kwargs):
@@ -69,7 +82,8 @@ class DamNode(object):
 
         return dct
 
-    def get_version_url_dict(self):
+    @_cached_property
+    def version_url_dict(self):
 
         def parse_title(title):
             ver = _parse_version(title, suffix='/?$')
@@ -92,36 +106,36 @@ class DamNode(object):
 
         return m.group('platf'), m.group('arch'), m.group('fmt')
 
-    def iter_packages(self, ver, platf, arch, fmt):
+    def find_version_url(self, version):
         def version_match(actual_ver, ver):
             if not ver:
                 return True
 
-            if not match(actual_ver[0], ver[0]):
+            if not self.match(actual_ver[0], ver[0]):
                 return False
 
-            if not match(actual_ver[1], ver[1]):
+            if not self.match(actual_ver[1], ver[1]):
                 return False
 
-            return match(actual_ver[2], ver[2])
+            return self.match(actual_ver[2], ver[2])
 
-        def match(actual_val, val):
-            return not val or val == actual_val
+        ver_url_dict = self.version_url_dict
 
-        ver_url_dict = self.get_version_url_dict()
+        for actual_version in reversed(sorted(six.iterkeys(ver_url_dict))):
+            if version_match(actual_version, version):
+                return ver_url_dict[actual_version]
 
-        for actual_ver in reversed(sorted(six.iterkeys(ver_url_dict))):
-            if version_match(actual_ver, ver):
-                ver_url = ver_url_dict[actual_ver]
-                pkg_url_dict = self.get_package_url_dict(ver_url)
+        return None
 
-                for (actual_platf, actual_arch, actual_fmt), pkg_url in six.iteritems(pkg_url_dict):
-                    if match(actual_platf, platf) and match(actual_arch, arch) and match(actual_fmt, fmt):
-                        yield pkg_url, actual_platf, actual_arch, actual_fmt
-                break
+    def iter_package_urls(self, version_url, platf, arch, fmt):
+        pkg_url_dict = self.get_package_url_dict(version_url)
 
-    def detect_platf_arch_fmt(self):
-        return self.detect_platf(), self.detect_arch(), self.detect_fmt()
+        for (actual_platf, actual_arch, actual_fmt), pkg_url in six.iteritems(pkg_url_dict):
+            if self.match(actual_platf, platf) and self.match(actual_arch, arch) and self.match(actual_fmt, fmt):
+                yield pkg_url
+
+    def match(self, actual_val, val):
+        return not val or val == actual_val
 
     def detect_platf(self):
         mapping = [
@@ -141,8 +155,8 @@ class DamNode(object):
         value = platform.machine().lower()
         return self.map(mapping, value)
 
-    def detect_fmt(self):
-        return 'zip' if self.detect_platf() == 'win' else 'tar.gz'
+    def detect_fmt(self, platf):
+        return 'zip' if platf == 'win' else 'tar.gz'
 
     def map(self, mapping, value):
         for pattern, value2 in mapping:
@@ -154,7 +168,7 @@ class DamNode(object):
     @contextmanager
     def download_package(self, pkg_url):
         # TODO: verify checksum
-        filename = Path(urlparse.urlparse(pkg_url).path).name
+        filename = osp.basename(urlparse.urlparse(pkg_url).path)
 
         with self.download_file(pkg_url) as path:
             yield path
@@ -165,39 +179,39 @@ class DamNode(object):
         total_size = resp.headers.get('content-length')
 
         with _temp_dir() as tdir:
-            path = tdir / Path(url).name
+            path = osp.join(tdir, osp.basename(url))
             content_length = int(resp.headers['content-length'])
 
-            with open(str(path), 'wb') as f, click.progressbar(length=content_length) as progress:
+            with open(path, 'wb') as f, click.progressbar(length=content_length) as progress:
                 for chunk in resp.iter_content(chunk_size=self.chunk_size):
                     f.write(chunk)
                     progress.update(self.chunk_size)
 
             yield path
 
-    def install_package(self, pkg_file):
-        pkg_file = Path(pkg_file)
-        echo('Installing {!r} into {!r}'.format(str(pkg_file), str(self.node_dir)))
+    def install_package(self, package_file):
+        echo('Installing {!r} into {!r}'.format(package_file, self.node_dir))
 
         with _temp_dir() as tdir:
-            if pkg_file.suffix == '.gz':  # tar.gz
-                with tarfile.open(str(pkg_file), 'r|gz') as tar_file:
-                    tar_file.extractall(str(tdir))
-            elif pkg_file.suffix == '.zip':
-                # TODO: test
-                with ZipFile(str(pkg_file), 'r') as zip_file:
-                    zip_file.extractall(str(tdir))
+            suffix = osp.splitext(package_file)[1]
+
+            if suffix == '.gz':  # tar.gz
+                with tarfile.open(package_file, 'r|gz') as tar_file:
+                    tar_file.extractall(tdir)
+            elif suffix == '.zip':
+                with ZipFile(package_file, 'r') as zip_file:
+                    zip_file.extractall(tdir)
             else:
-                raise NotImplementedError('File format not supported: {}'.format(pkg_file.name))
+                raise NotImplementedError('File format not supported: {}'.format(osp.basename(package_file)))
 
-            extracted_node_dir = tdir / os.listdir(str(tdir))[0]
+            extracted_node_dir = osp.join(tdir, os.listdir(tdir)[0])
 
-            _rmtree(str(self.node_dir))
-            shutil.move(str(extracted_node_dir), str(self.node_dir))
+            _rmtree(self.node_dir)
+            shutil.move(extracted_node_dir, self.node_dir)
 
     @property
     def installed(self):
-        return self.node_dir.exists()
+        return osp.exists(self.node_dir)
 
 
 class DamNodeError(ClickException):
@@ -212,15 +226,15 @@ class VersionType(ParamType):
 
 
 def install(args):
-    cmd_install(args, standalone=False)
+    cmd_install(args, standalone_mode=False)
 
 
 def uninstall(args):
-    cmd_uninstall(args, standalone=False)
+    cmd_uninstall(args, standalone_mode=False)
 
 
 def nrun(args):
-    cmd_nrun(args, standalone=False)
+    cmd_nrun(args, standalone_mode=False)
 
 
 def node(args):
@@ -237,73 +251,23 @@ def cmd_main():
     pass
 
 
-# TODO: merge into cmd_install()
-@cmd_main.command('list')
-@click.help_option('-h', '--help')
-@click.argument('version',
-                 metavar='VERSION',
-                 required=False,
-                 type=VersionType())
-@click.option('-p', 'platf',
-              help='Platform (e.g. darwin, linux, win)')
-@click.option('-a', 'arch',
-              metavar='ARCH',
-              help='Architecture (e.g. arm64, x64, x86)')
-@click.option('-f', 'fmt',
-              metavar='FMT',
-              help='File format (e.g. tar.gz, zip)')
-@click.option('--detect/--no-detect',
-              default=True,
-              help='Detect platf, arch and fmt, default on')
-def cmd_list(version, platf, arch, fmt, detect):
-    '''
-    List Node packages
-
-    VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6)
-    '''
-    damn = DamNode()
-    det_platf = damn.detect_platf()
-    det_arch = damn.detect_arch()
-    det_fmt = damn.detect_fmt()
-
-    if detect:
-        platf = platf or det_platf
-        arch = arch or det_arch
-        fmt = fmt or det_fmt
-
-    echo('platf: {}'.format(platf))
-    echo('arch: {}'.format(arch))
-    echo('fmt: {}'.format(fmt))
-
-    pkgs = list(damn.iter_packages(version, platf, arch, fmt))
-
-    if not pkgs:
-        echo('No packages found, version too low or too high?')
-        return
-
-    all_platfs = set()
-    all_archs = set()
-    all_fmts = set()
-
-    for pkg_url, platf, arch, fmt in pkgs:
-        all_platfs.add(platf)
-        all_archs.add(arch)
-        all_fmts.add(fmt)
-        echo(pkg_url)
-
-    lst = lambda s: ', '.join(sorted(s))
-    echo('all_platfs: {}'.format(lst(all_platfs)))
-    echo('all_archs: {}'.format(lst(all_archs)))
-    echo('all_fmts: {}'.format(lst(all_fmts)))
-
-
 @cmd_main.command('install')
+@click.option('-p', '--platform', 'platf',
+              help='E.g. darwin, linux, win (default: current platform)')
+@click.option('-a', '--architecture', 'arch',
+              help='E.g. arm64, x64, x86 (default: current architecture)')
+@click.option('-f', '--format', 'fmt',
+              help="E.g. tar.gz, zip (default: platform's preferred format)")
+@click.option('--detect/--no-detect', 'detect',
+              default=True,
+              help='Detect platform, architecture and format (default: true)')
+@click.option('--list-versions', is_flag=True,
+              help='List available versions')
 @click.help_option('-h', '--help')
 @click.argument('version',
                  required=False,
                  type=VersionType())
-# TODO: add -l/--list, -p/--platform and -a/--architecture options
-def cmd_install(version):
+def cmd_install(platf, arch, fmt, detect, version, list_versions):
     '''
     Install Node
 
@@ -312,20 +276,47 @@ def cmd_install(version):
     '''
     damn = DamNode()
 
+    if list_versions:
+        for ver in reversed(sorted(damn.version_url_dict.keys())):  # TODO: damn.versions
+            echo('.'.join([str(n) for n in ver]))  # TODO: format_version()
+        return
+
     if damn.installed:
         raise DamNodeError("Node is already installed, you can uninstall it by running 'damnode uninstall'")
 
-    platf, arch, fmt = damn.detect_platf_arch_fmt()
-    pkgs = list(damn.iter_packages(version, platf, arch, fmt))
+    if platf is None and detect:
+        platf = damn.detect_platf()
 
-    if not pkgs:
-        # TODO: add version arg if specified
-        raise DamNodeError("Couldn not find suitable package install, run 'damnode -l -p \'\' -a \'\'' to find out why")
+    if arch is None and detect:
+        arch = damn.detect_arch()
 
-    pkg_url = pkgs[0][0]
+    if fmt is None and detect:
+        fmt = damn.detect_fmt(platf)
 
-    with damn.download_package(pkg_url) as pkg_file:
-        damn.install_package(pkg_file)
+    version_url = damn.find_version_url(version)
+
+    if not version_url:
+        raise DamNodeError("Could not find the version specified, please run 'damnode install --list-versions' to see versions available")
+
+    package_urls = list(damn.iter_package_urls(version_url, platf, arch, fmt))
+
+    if not package_urls:
+        version_str = ' {}'.format(version) if version else ''  # TODO: format_version()
+        raise DamNodeError((
+            "Could not find package for {}-{} in {} format"
+            ", please run \"damnode install -p '' -a '' -f ''{}\" to see why").format(platf, arch, fmt, version_str))
+
+    if len(package_urls) > 1:
+        msg = ['More than one package found:']
+
+        for url in package_urls:
+            msg.append('\n  ')
+            msg.append(url)
+
+        raise DamNodeError(''.join(msg))
+
+    with damn.download_package(package_urls[0]) as package_file:
+        damn.install_package(package_file)
 
     # To prevent warning: "npm is using <node>/bin/node but there is no node binary in the current PATH"
     nrun(['npm', 'config', 'set', 'scripts-prepend-node-path', 'false'])
@@ -339,18 +330,17 @@ def cmd_uninstall(yes):
     Uninstall Node.
     '''
     damn = DamNode()
-    node_dir = str(damn.node_dir)
 
     if not yes:
-        click.confirm('This will remove {!r}, are you sure?'.format(node_dir, abort=True))
+        click.confirm('This will remove {!r}, are you sure?'.format(damn.node_dir, abort=True))
 
-    _rmtree(node_dir)
-    echo('{!r} removed'.format(node_dir))
+    _rmtree(damn.node_dir)
+    echo('{!r} removed'.format(damn.node_dir))
 
 
 @click.command(context_settings=dict(ignore_unknown_options=True))
 @click.help_option('-h', '--help')
-@click.option('-g', 'use_global', is_flag=True, help='Include global node_modules')  # TODO: full path
+@click.option('-g', 'use_global', is_flag=True, help='Include global node_modules')
 @click.argument('node_bin', nargs=-1, type=click.UNPROCESSED)
 def cmd_nrun(use_global, node_bin):
     damn = DamNode()
@@ -358,7 +348,8 @@ def cmd_nrun(use_global, node_bin):
     if not damn.installed:
         raise DamNodeError("Node is not yet installed, run 'damnode install' to install it")
 
-    bin_dir = damn.node_dir / 'bin'
+    # FIXME: No bin directory on Windows zip
+    bin_dir = osp.join(damn.node_dir, 'bin')
 
     if not node_bin:
         msg = [
@@ -366,27 +357,29 @@ def cmd_nrun(use_global, node_bin):
             'Please specified one:'
         ]
 
-        for bin_name in os.listdir(str(bin_dir)):
+        for bin_name in os.listdir(bin_dir):
             msg.append('\n  ')
             msg.append(bin_name)
 
         raise click.BadParameter(''.join(msg))
 
-    prog = bin_dir / node_bin[0]
-    cmd = [str(prog)]
+    # TODO: ./node_modules/*/bin
+
+    cmd = [osp.join(bin_dir, node_bin[0])]
     cmd.extend(node_bin[1:])
 
     env = None
 
     if use_global:
         env = {
-            'NODE_PATH': str(damn.node_dir / 'lib/node_modules')
+            'NODE_PATH': osp.join(damn.node_dir, 'lib/node_modules')
         }
 
     try:
         subprocess.check_call(cmd, env=env)
     # TODO: handle ENOENT, print list like missing node_bin
     except CalledProcessError as e:
+        # TODO: raise SystemExit(e.returncode) if standalone_mode
         cmdline = subprocess.list2cmdline(cmd)
         e2 = ClickException('{!r} failed with exit code {!r}'.format(cmdline, e.returncode))
         e2.exit_code = e.returncode
@@ -416,7 +409,7 @@ def _parse_version(ver_str, prefix=r'^', suffix=r'$'):
 def _temp_dir():
     dirname = tempfile.mkdtemp()
     try:
-        yield Path(dirname)
+        yield dirname
     finally:
         _rmtree(dirname)
 

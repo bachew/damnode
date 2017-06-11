@@ -35,7 +35,6 @@ def main():
             'beautifulsoup4',
             'cachecontrol[filecache]',
             'Click>=6.7,<7',
-            'pathlib2',
             'requests',
             'six',
         ],
