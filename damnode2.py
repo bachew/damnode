@@ -4,8 +4,11 @@ import errno
 import os
 import re
 import requests
+import shutil
+import tempfile
 import traceback
 from click import ClickException
+from contextlib import contextmanager
 from os import path as osp
 from six.moves.html_parser import HTMLParser
 from six.moves.urllib import parse as urlparse
@@ -20,6 +23,7 @@ class Damnode(object):
         '.xz',
         '.zip',
     ]
+    DOWNLOAD_CHUNK_SIZE = 10 * 1024
 
     def __init__(self):
         self.verbose = False
@@ -38,25 +42,26 @@ class Damnode(object):
     def uninstall(self):
         self.info('TODO')
 
-    def list_index(self, index):
-        for suffix in self.KNOWN_PACKAGE_SUFFIXES:
-            if index.endswith(suffix):
-                raise ValueError('{!r} is a package, not an index'.format(index))
+    def read_links(self, link):
+        if self.is_package(link):
+            raise ValueError('{!r} is a package, does not have links'.format(link))
+
+        self.info('Reading links from {!r}'.format(link))
 
         try:
-            entries = os.listdir(index)
+            entries = os.listdir(link)
         except EnvironmentError as e:
             if e.errno in (errno.ENOENT, errno.ENOTDIR):
                 pass
             else:
                 raise
         else:
-            return sorted([osp.join(index, e) for e in entries])
+            return sorted([osp.join(link, e) for e in entries])
 
-        list_html = lambda h: IndexHtmlParser(index, h).entries
+        read_html = lambda h: HtmlLinksParser(link, h).links
 
         try:
-            with open(index, 'r') as f:
+            with open(link, 'r') as f:
                 html = f.read()
         except EnvironmentError as e:
             if e.errno  == errno.ENOENT:
@@ -64,16 +69,91 @@ class Damnode(object):
             else:
                 raise
         else:
-            return sorted(list_html(html))
+            return sorted(read_html(html))
 
-        resp = requests.get(index)
-        return sorted(list_html(resp.text))
+        resp = requests.get(link)
+        return sorted(read_html(resp.text))
+
+    def is_package(self, link):
+        for suffix in self.KNOWN_PACKAGE_SUFFIXES:
+            if link.endswith(suffix):
+                return True
+
+        return False
+
+    @contextmanager
+    def download(self, link):
+        if not self.is_package(link):
+            raise ValueError('{!r} is not a package and cannot be downloaded'.format(link))
+
+        if osp.isfile(link):
+            yield link
+            return
+
+        name = osp.basename(link)
+
+        if self.cache_dir:
+            cached_file = osp.join(self.cache_dir, name)
+
+            if osp.isfile(cached_file):
+                self.info('Using cached {!r}'.format(cached_file))
+                yield cached_file
+                return
+
+        self.info('Downloading {!r}'.format(link))
+        resp = requests.get(link, stream=True)
+
+        with self._ensure_cache_dir() as cache_dir:
+            fd, tfile = tempfile.mkstemp(prefix='{}.download-'.format(name), dir=cache_dir)
+            self.debug('Downloading to temp file {!r}'.format(tfile))
+
+            with open(tfile, 'wb') as f:
+                for chunk in self._iter_resp_chunks(resp):
+                    f.write(chunk)
+
+            final_file = osp.join(cache_dir, name)
+            self.debug('Rename {!r} to {!r}'.format(tfile, final_file))
+            os.rename(tfile, final_file)
+            yield final_file
+
+    @contextmanager
+    def _ensure_cache_dir(self):
+        if self.cache_dir:
+            try:
+                os.makedirs(self.cache_dir)
+            except EnvironmentError as e:
+                if e.errno == errno.EEXIST:
+                    pass
+                else:
+                    raise
+            yield self.cache_dir
+            return
+
+        tdir = tempfile.mkdtemp()
+        try:
+            yield tdir
+        finally:
+            shutil.rmtree(tdir)
+
+    def _iter_resp_chunks(self, resp):
+        chunk_size = self.DOWNLOAD_CHUNK_SIZE
+        try:
+            content_length = int(resp.headers.get('content-length', ''))
+        except ValueError:
+            for chunk in resp.iter_content(chunk_size=chunk_size):
+                yield chunk
+        else:
+            # Got Content-Length, show progress bar
+            with click.progressbar(length=content_length) as progress:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    yield chunk
+                    progress.update(chunk_size)
 
 
-class IndexHtmlParser(HTMLParser):
+class HtmlLinksParser(HTMLParser):
     def __init__(self, url, html):
         HTMLParser.__init__(self)
-        self.entries = []
+        self.links = []
         self.url = url
         self.feed(html)
 
@@ -91,7 +171,7 @@ class IndexHtmlParser(HTMLParser):
                 continue
 
             path = urlparse.urljoin(self.url, value)
-            self.entries.append(path)
+            self.links.append(path)
 
 
 class DamnodeCommand(click.Group):
@@ -132,12 +212,13 @@ def cli_install(damnode, index_url, cache_dir, hint):
     Install Node of latest version or from the given HINT, it is detected as follows:
 
     \b
-    1. Package URL (e.g. https://nodejs.org/dist/v4.8.3/node-v4.8.3-linux-x64.tar.gz)
-    2. Version URL (e.g. https://nodejs.org/dist/v5.12.0/)
-    2. Package filename (e.g. ~/Downloads/node-v6.11.0-darwin-x64.tar.gz)
-    3. Exact version (e.g. 7.9.0, v7.10.0), v doesn't matter
-    4. Partial version (e.g. v8, 8.1), latest version will be selected
-    5. LTS name (e.g. argon, Boron), case insensitive
+    1. Exact version (e.g. 7.9.0, v7.10.0), v doesn't matter
+    2. Partial version (e.g. v8, 8.1), latest version will be selected
+    3. Package file (e.g. ~/Downloads/node-v6.11.0-darwin-x64.tar.gz)
+    4. Package URL (e.g. https://nodejs.org/dist/v4.8.3/node-v4.8.3-linux-x64.tar.gz)
+    5. Packages directory (e.g. /var/www/html/node/v5.12.0/)
+    6. Version URL (e.g. https://nodejs.org/dist/v5.12.0/)
+    7. LTS name (e.g. argon, Boron), case insensitive
 
     Only tar.gz and zip formats are supported.
     '''

@@ -419,7 +419,6 @@ def _temp_dir():
     try:
         yield dirname
     finally:
-        return  # TESTING
         _rmtree(dirname)
 
 

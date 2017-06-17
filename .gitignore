@@ -7,10 +7,10 @@ node_modules
 
 /.eggs
 /*.egg*
-/build
 /dist
+/build
+/testdata
 
-/node
 /tmp
 /vn2
 /vn3
