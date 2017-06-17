@@ -1,11 +1,25 @@
 # -*- coding: utf-8 -*-
 import click
+import errno
+import os
+import re
+import requests
 import traceback
 from click import ClickException
+from os import path as osp
+from six.moves.html_parser import HTMLParser
+from six.moves.urllib import parse as urlparse
 
 
 class Damnode(object):
     DEFAULT_INDEX_URL = 'https://nodejs.org/dist/'
+    KNOWN_PACKAGE_SUFFIXES = [
+        '.gz',
+        '.msi',
+        '.pkg',
+        '.xz',
+        '.zip',
+    ]
 
     def __init__(self):
         self.verbose = False
@@ -23,6 +37,61 @@ class Damnode(object):
 
     def uninstall(self):
         self.info('TODO')
+
+    def list_index(self, index):
+        for suffix in self.KNOWN_PACKAGE_SUFFIXES:
+            if index.endswith(suffix):
+                raise ValueError('{!r} is a package, not an index'.format(index))
+
+        try:
+            entries = os.listdir(index)
+        except EnvironmentError as e:
+            if e.errno in (errno.ENOENT, errno.ENOTDIR):
+                pass
+            else:
+                raise
+        else:
+            return sorted([osp.join(index, e) for e in entries])
+
+        list_html = lambda h: IndexHtmlParser(index, h).entries
+
+        try:
+            with open(index, 'r') as f:
+                html = f.read()
+        except EnvironmentError as e:
+            if e.errno  == errno.ENOENT:
+                pass
+            else:
+                raise
+        else:
+            return sorted(list_html(html))
+
+        resp = requests.get(index)
+        return sorted(list_html(resp.text))
+
+
+class IndexHtmlParser(HTMLParser):
+    def __init__(self, url, html):
+        HTMLParser.__init__(self)
+        self.entries = []
+        self.url = url
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != 'a':
+            return
+
+        for name, value in attrs:
+            if name.lower() != 'href':
+                continue
+
+            value = value.strip()
+
+            if not value:
+                continue
+
+            path = urlparse.urljoin(self.url, value)
+            self.entries.append(path)
 
 
 class DamnodeCommand(click.Group):
