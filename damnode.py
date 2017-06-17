@@ -18,6 +18,7 @@ from cachecontrol.caches.file_cache import FileCache
 from click import BadParameter, ClickException, echo, ParamType
 from collections import OrderedDict
 from contextlib import contextmanager
+from distutils import dir_util
 from bs4 import BeautifulSoup
 from os import path as osp
 from six.moves.urllib import parse as urlparse
@@ -193,12 +194,19 @@ class DamNode(object):
         echo('Installing {!r} into {!r}'.format(package_file, self.node_dir))
 
         with _temp_dir() as tdir:
-            suffix = osp.splitext(package_file)[1]
-
-            if suffix == '.gz':  # tar.gz
+            if package_file.endswith('.tar.gz'):  # tar.gz
                 with tarfile.open(package_file, 'r|gz') as tar_file:
-                    tar_file.extractall(tdir)
-            elif suffix == '.zip':
+                    # tar_file.extractall(tdir)
+
+                    # TESTING
+                    first_dir = osp.basename(package_file[:-7])
+                    echo('first_dir: {!r}'.format(first_dir))
+
+                    for member in tar_file:
+                        member.name = osp.relpath(member.name, first_dir)
+                        echo('extract {} -> {}'.format(member.name, sys.prefix))
+                        tar_file.extract(member, sys.prefix)
+            elif package_file.endswith('.zip'):
                 with ZipFile(package_file, 'r') as zip_file:
                     zip_file.extractall(tdir)
             else:
@@ -206,8 +214,8 @@ class DamNode(object):
 
             extracted_node_dir = osp.join(tdir, os.listdir(tdir)[0])
 
-            _rmtree(self.node_dir)
-            shutil.move(extracted_node_dir, self.node_dir)
+            # _rmtree(self.node_dir)
+            # shutil.move(extracted_node_dir, sys.prefix)
 
     @property
     def installed(self):
@@ -411,6 +419,7 @@ def _temp_dir():
     try:
         yield dirname
     finally:
+        return  # TESTING
         _rmtree(dirname)
 
 

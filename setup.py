@@ -44,6 +44,8 @@ def main():
                 'nrun=damnode:cmd_nrun',
                 'node=damnode:cmd_node',
                 'npm=damnode:cmd_npm',
+
+                'damnode2=damnode2:cli',
             ],
         },
         'test_suite': 'testdamnode',
