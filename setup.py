@@ -32,11 +32,13 @@ def main():
             'wheel',
         ],
         'install_requires': [
+            'appdirs>=1.4.0'
+            'Click>=6.7',
+            'requests>=2.17.3',
+            'six>=1.10.0',
+
             'beautifulsoup4',
             'cachecontrol[filecache]',
-            'Click>=6.7,<7',
-            'requests',
-            'six',
         ],
         'entry_points': {
             'console_scripts': [

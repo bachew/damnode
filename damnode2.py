@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import appdirs
 import click
 import errno
 import os
@@ -25,8 +26,16 @@ class Damnode(object):
     ]
     DOWNLOAD_CHUNK_SIZE = 10 * 1024
 
+    def _cache_dir():
+        app_name = osp.splitext(osp.basename(__file__))[0]
+        app_author = app_name  # makes no sense to use my name
+        return appdirs.user_cache_dir(app_name, app_name)
+
+    DEFAULT_CACHE_DIR = _cache_dir()
+
     def __init__(self):
         self.verbose = False
+        self.cache = True
         self.cache_dir = None
 
     def info(self, msg):
@@ -86,13 +95,9 @@ class Damnode(object):
         if not self.is_package(link):
             raise ValueError('{!r} is not a package and cannot be downloaded'.format(link))
 
-        if osp.isfile(link):
-            yield link
-            return
-
         name = osp.basename(link)
 
-        if self.cache_dir:
+        with self._ensure_cache_dir():
             cached_file = osp.join(self.cache_dir, name)
 
             if osp.isfile(cached_file):
@@ -100,25 +105,34 @@ class Damnode(object):
                 yield cached_file
                 return
 
-        self.info('Downloading {!r}'.format(link))
-        resp = requests.get(link, stream=True)
+            if osp.isfile(link):
+                self.info('Copying {!r}'.format(link))
+                shutil.copyfile(link, cached_file)
+                shutil.copystat(link, cached_file)
+                yield cached_file
+                return
 
-        with self._ensure_cache_dir() as cache_dir:
-            fd, tfile = tempfile.mkstemp(prefix='{}.download-'.format(name), dir=cache_dir)
-            self.debug('Downloading to temp file {!r}'.format(tfile))
+            temp_fd, temp_file = tempfile.mkstemp(prefix='{}.download-'.format(name),
+                                                  dir=self.cache_dir)
+            self.info('Downloading {!r}'.format(link))
+            self.debug('Downloading to temp file {!r}'.format(temp_file))
 
-            with open(tfile, 'wb') as f:
+            with open(temp_file, 'wb') as f:
+                resp = requests.get(link, stream=True)
+
                 for chunk in self._iter_resp_chunks(resp):
                     f.write(chunk)
 
-            final_file = osp.join(cache_dir, name)
-            self.debug('Rename {!r} to {!r}'.format(tfile, final_file))
-            os.rename(tfile, final_file)
-            yield final_file
+            self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
+            os.rename(temp_file, cached_file)
+            yield cached_file
 
     @contextmanager
     def _ensure_cache_dir(self):
-        if self.cache_dir:
+        if self.cache:
+            if not self.cache_dir:
+                self.cache_dir = self.DEFAULT_CACHE_DIR
+
             try:
                 os.makedirs(self.cache_dir)
             except EnvironmentError as e:
@@ -126,14 +140,17 @@ class Damnode(object):
                     pass
                 else:
                     raise
-            yield self.cache_dir
+
+            yield
             return
 
-        tdir = tempfile.mkdtemp()
+        orig_cache_dir = self.cache_dir
+        self.cache_dir = tempfile.mkdtemp()
         try:
-            yield tdir
+            yield
         finally:
-            shutil.rmtree(tdir)
+            shutil.rmtree(self.cache_dir)
+            self.cache_dir = orig_cache_dir
 
     def _iter_resp_chunks(self, resp):
         chunk_size = self.DOWNLOAD_CHUNK_SIZE
@@ -203,11 +220,15 @@ def cli(damnode, verbose):
 
 @cli.command('install')
 @click.help_option('-h', '--help')
-@click.option('-i', '--index-url', help='Node index URL (default: {})'.format(Damnode.DEFAULT_INDEX_URL))
-@click.option('-c', '--cache-dir', help='Directory to cache downloads (default: no cache)')
+@click.option('-i', '--index',
+              help='Node index directory or URL (default: {!r})'.format(Damnode.DEFAULT_INDEX_URL))
+@click.option('--no-cache', is_flag=True,
+              help='Do not cache downloads')
+@click.option('--cache-dir',
+              help='Directory to cache downloads (default: {!r})'.format(Damnode.DEFAULT_CACHE_DIR))
 @click.argument('hint', required=False)
 @click.pass_obj
-def cli_install(damnode, index_url, cache_dir, hint):
+def cli_install(damnode, index, no_cache, cache_dir, hint):
     '''
     Install Node of latest version or from the given HINT, it is detected as follows:
 
@@ -222,7 +243,8 @@ def cli_install(damnode, index_url, cache_dir, hint):
 
     Only tar.gz and zip formats are supported.
     '''
-    damnode.index_url = index_url
+    damnode.index = index
+    damnode.cache = not no_cache
     damnode.cache_dir = cache_dir
     damnode.install(hint)
 

@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
+import shutil
 from unittest import TestCase, skip
 from damnode2 import Damnode
 from os import path as osp
 
 
-class LinksTest(TestCase):
+class IoTest(TestCase):
     def damnode(self):
         d = Damnode()
         d.verbose = True
+        d.cache_dir = data_dir('cache')
         return d
 
     def test_read_links_dir(self):
@@ -61,31 +63,43 @@ class LinksTest(TestCase):
         else:
             self.fail('Exception not raised')
 
-    def test_download_url(self):
+    def test_download_local(self):
         d = self.damnode()
-        d.cache_dir = data_dir('cache')
+        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-headers.tar.xz'
+        cached_file = osp.join(d.cache_dir, 'node-v6.11.0-headers.tar.xz')
 
-        with d.download('https://nodejs.org/dist/latest-v6.x/node-v6.11.0-headers.tar.xz') as filename:
-            self.assertEqual(data_dir('cache/node-v6.11.0-headers.tar.xz'), filename)
+        with d.download(url) as filename:
+            self.assertEqual(cached_file, filename)
+            mtime = int(osp.getmtime(filename))  # shutil.copystat() is not perfect
 
-    def test_download_url(self):
+        d.cache_dir = data_dir('cache2')
+        shutil.rmtree(d.cache_dir)
+
+        with d.download(cached_file) as filename:
+            self.assertEqual(data_dir('cache2/node-v6.11.0-headers.tar.xz'), filename)
+            self.assertEqual(mtime, int(osp.getmtime(filename)))
+
+    def test_download_remote(self):
         d = self.damnode()
         url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-headers.tar.xz'
 
         with d.download(url) as filename:
-            self.assertEqual('node-v6.11.0-headers.tar.xz', osp.basename(filename))
-
-    def test_download_url_cached(self):
-        d = self.damnode()
-        d.cache_dir = data_dir('cache')
-        url = 'https://nodejs.org/dist/latest-v7.x/node-v7.10.0-headers.tar.xz'
-
-        with d.download(url) as filename:
-            self.assertEqual(data_dir('cache/node-v7.10.0-headers.tar.xz'), filename)
+            self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-headers.tar.xz'), filename)
             mtime = osp.getmtime(filename)
 
         with d.download(url) as filename:
             self.assertEqual(mtime, osp.getmtime(filename))
+
+    def test_download_no_cache(self):
+        d = self.damnode()
+        d.cache = False
+        d.cache_dir = 'does-not-matter'
+
+        with d.download(data_dir('cache/node-v6.11.0-headers.tar.xz')) as filename:
+            self.assertNotEqual('does-not-matter', d.cache_dir)
+            self.assertTrue(filename.startswith(d.cache_dir))
+
+        self.assertEqual('does-not-matter', d.cache_dir)
 
 
 def data_dir(*path):
