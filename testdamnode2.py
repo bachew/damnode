@@ -5,6 +5,25 @@ from damnode2 import Damnode
 from os import path as osp
 
 
+class NameTest(TestCase):
+    def test_parse_package(self):
+        d = Damnode()
+        self.assertEqual(((8, 1, 2), 'darwin', 'x64', 'tar.gz'),
+                          d.parse_package('node-v8.1.2-darwin-x64.tar.gz'))
+        self.assertRaises(ValueError, d.parse_package, 'foobar-v8.1.2-darwin-x64.tar.gz')
+        self.assertRaises(ValueError, d.parse_package, 'node-v8.1.2-darwin-x64')
+
+    def test_parse_version(self):
+        d = Damnode()
+        self.assertEqual((4, None, None), d.parse_version('v4'))
+        self.assertEqual((5, 12, None), d.parse_version('5.12'))
+        self.assertEqual((6, 11, 0), d.parse_version('v6.11.0'))
+        self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
+        self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
+
+    # TODO: use parse_package in is_package, update IoTest
+
+
 class IoTest(TestCase):
     def damnode(self):
         d = Damnode()
@@ -21,7 +40,7 @@ class IoTest(TestCase):
         ]
         self.assertEqual(expected, entries)
 
-    def test_read_links_file(self):
+    def test_read_local_links(self):
         d = self.damnode()
         entries = d.read_links(data_dir('index2/index.html'))
         expected = [
@@ -30,7 +49,7 @@ class IoTest(TestCase):
         ]
         self.assertEqual(expected, entries)
 
-    def test_read_links_url(self):
+    def test_read_remote_links(self):
         d = self.damnode()
         entries = d.read_links('https://nodejs.org/dist/latest-v5.x/')
         self.assertTrue('https://nodejs.org/dist/latest-v5.x/node-v5.12.0-linux-arm64.tar.gz' in entries, entries)

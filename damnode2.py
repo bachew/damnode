@@ -33,6 +33,9 @@ class Damnode(object):
 
     DEFAULT_CACHE_DIR = _cache_dir()
 
+    _package_re = re.compile(r'^node-(?P<version>[^-]+)-(?P<platform>[^-]+)-(?P<arch>[^\.]+)\.(?P<format>.+)$')
+    _version_re = re.compile(r'^v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?$')
+
     def __init__(self):
         self.verbose = False
         self.cache = True
@@ -46,10 +49,36 @@ class Damnode(object):
             self.info('DEBUG: {}'.format(msg))
 
     def install(self, hint):
-        self.info("Let's install {}!".format(hint))
+        version = None
+
+        if hint:
+            try:
+                version = self.parse_version(hint)
+            except ValueError:
+                pass
+
+        self.info('version: {}'.format(version))
 
     def uninstall(self):
         self.info('TODO')
+
+    def parse_package(self, name):
+        m = self._package_re.match(name)
+
+        if not m:
+            raise ValueError
+
+        version = self.parse_version(m.group('version'))
+        return version, m.group('platform'), m.group('arch'), m.group('format')
+
+    def parse_version(self, name):
+        m = self._version_re.match(name)
+
+        if not m:
+            raise ValueError
+
+        opt_int = lambda i: None if i is None else int(i)
+        return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
 
     def read_links(self, link):
         if self.is_package(link):
@@ -157,6 +186,7 @@ class Damnode(object):
         try:
             content_length = int(resp.headers.get('content-length', ''))
         except ValueError:
+            # No Content-Length, no progress
             for chunk in resp.iter_content(chunk_size=chunk_size):
                 yield chunk
         else:
