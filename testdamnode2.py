@@ -63,28 +63,28 @@ class IoTest(TestCase):
         d = self.damnode()
         self.assertEqual(['v6.xz'], d.read_links('v6.xz'))
 
-    def test_download_local(self):
+    def test_download_local_package(self):
         d = self.damnode()
 
-        with d.download(data_dir('index/v2.tar.gz')) as filename:
+        with d.download_package(data_dir('index/v2.tar.gz')) as filename:
             self.assertEqual(data_dir('index/v2.tar.gz'), filename)
 
-    def test_download_not_package(self):
+    def test_download_none_package(self):
         d = self.damnode()
         try:
-            with d.download('https://nodejs.org/dist/not-node.zip') as filename:
+            with d.download_package('https://nodejs.org/dist/not-node.zip') as filename:
                 pass
         except ValueError as e:
             self.assertEqual("'https://nodejs.org/dist/not-node.zip' is not a package and cannot be downloaded", str(e))
         else:
             self.fail('Exception not raised')
 
-    def test_download_local(self):
+    def test_download_cached_package(self):
         d = self.damnode()
         url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-darwin-x64.tar.gz'
         cached_file = osp.join(d.cache_dir, 'node-v6.11.0-darwin-x64.tar.gz')
 
-        with d.download(url) as filename:
+        with d.download_package(url) as filename:
             self.assertEqual(cached_file, filename)
             mtime = int(osp.getmtime(filename))  # shutil.copystat() is not perfect
 
@@ -93,28 +93,28 @@ class IoTest(TestCase):
         if osp.exists(d.cache_dir):
             shutil.rmtree(d.cache_dir)
 
-        with d.download(cached_file) as filename:
+        with d.download_package(cached_file) as filename:
             self.assertEqual(data_dir('cache2/node-v6.11.0-darwin-x64.tar.gz'), filename)
             self.assertEqual(mtime, int(osp.getmtime(filename)))
 
-    def test_download_remote(self):
+    def test_download_remote_package(self):
         d = self.damnode()
         url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-win-x64.zip'
 
-        with d.download(url) as filename:
+        with d.download_package(url) as filename:
             self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-win-x64.zip'), filename)
             mtime = osp.getmtime(filename)
 
-        with d.download(url) as filename:
+        with d.download_package(url) as filename:
             self.assertEqual(mtime, osp.getmtime(filename))
 
-    def test_download_no_cache(self):
+    def test_download_package_no_cache(self):
         d = self.damnode()
         d.enable_cache = False
         unused_cache_dir = data_dir('cache3')
         d.cache_dir = unused_cache_dir
 
-        with d.download(data_dir('cache/node-v6.11.0-win-x64.zip')) as filename:
+        with d.download_package(data_dir('cache/node-v6.11.0-win-x64.zip')) as filename:
             self.assertNotEqual(unused_cache_dir, d.cache_dir)
             self.assertTrue(filename.startswith(d.cache_dir))
 

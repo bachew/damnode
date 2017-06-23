@@ -3,6 +3,7 @@ import appdirs
 import click
 import errno
 import os
+import platform
 import re
 import requests
 import shutil
@@ -49,6 +50,11 @@ class Damnode(object):
             self.info('DEBUG: {}'.format(msg))
 
     def install(self, hint):
+        if hint and self.has_package_suffix(hint):
+            with self.download_package(hint) as filename:
+                self.install_package(filename)  # TODO: implement
+            return
+
         version = None
 
         if hint:
@@ -57,7 +63,14 @@ class Damnode(object):
             except ValueError:
                 pass
 
-        self.info('version: {}'.format(version))
+        platf, fmt = self.detect_platform_format()
+        arch = self.detect_architecture()
+
+        self.debug('version = {!r}'.format(version))
+        self.debug('platf = {!r}'.format(platf))
+        self.debug('arch = {!r}'.format(arch))
+        self.debug('fmt = {!r}'.format(fmt))
+        # self.info('{} {} {} {}'.format(version, platf, arch, fmt))
 
     def uninstall(self):
         self.info('TODO')
@@ -79,6 +92,33 @@ class Damnode(object):
 
         opt_int = lambda i: None if i is None else int(i)
         return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
+
+    def detect_platform_format(self):
+        mapping = [
+            (r'^windows$', ('win', 'zip')),
+            # TODO: aix, sunos
+            (r'.*', ('linux', 'tar.gz'))
+        ]
+        return self._detect(mapping, platform.system())
+
+    def detect_architecture(self):
+        mapping = [
+            (r'^x86[^\d]64$', 'x64'),
+            (r'^amd64$', 'x64'),
+            (r'^x86[^\d]', 'x86'),
+            # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
+            (r'.*', 'x64'),
+        ]
+        return self._detect(mapping, platform.machine())
+
+    def _detect(self, mapping, value):
+        value = value.lower()
+
+        for pattern, value2 in mapping:
+            if re.match(pattern, value):
+                return value2
+
+        raise ValueError
 
     def read_links(self, link):
         self.info('Reading links from {!r}'.format(link))
@@ -120,7 +160,7 @@ class Damnode(object):
         return False
 
     @contextmanager
-    def download(self, link):
+    def download_package(self, link):
         # Not using has_package_suffix(), need to be strict when downloading
         if not self.is_package(link):
             raise ValueError('{!r} is not a package and cannot be downloaded'.format(link))
