@@ -16,30 +16,30 @@ from six.moves.urllib import parse as urlparse
 
 
 class Damnode(object):
-    DEFAULT_INDEX_URL = 'https://nodejs.org/dist/'
-    KNOWN_PACKAGE_SUFFIXES = [
+    def _get_default_cache_dir():
+        app_name = osp.splitext(osp.basename(__file__))[0]
+        app_author = app_name  # makes no sense to use my name
+        return appdirs.user_cache_dir(app_name, app_name)
+
+    default_cache_dir = _get_default_cache_dir()
+    default_index = 'https://nodejs.org/dist/'
+
+    all_package_suffixes = [
         '.gz',
         '.msi',
         '.pkg',
         '.xz',
         '.zip',
     ]
-    DOWNLOAD_CHUNK_SIZE = 10 * 1024
-
-    def _cache_dir():
-        app_name = osp.splitext(osp.basename(__file__))[0]
-        app_author = app_name  # makes no sense to use my name
-        return appdirs.user_cache_dir(app_name, app_name)
-
-    DEFAULT_CACHE_DIR = _cache_dir()
+    download_chunk_size = 10 * 1024
 
     _package_re = re.compile(r'^node-(?P<version>[^-]+)-(?P<platform>[^-]+)-(?P<arch>[^\.]+)\.(?P<format>.+)$')
     _version_re = re.compile(r'^v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?$')
 
     def __init__(self):
         self.verbose = False
-        self.cache = True
-        self.cache_dir = None
+        self.enable_cache = True
+        self.cache_dir = self.default_cache_dir
 
     def info(self, msg):
         click.echo(str(msg))
@@ -81,10 +81,10 @@ class Damnode(object):
         return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
 
     def read_links(self, link):
-        if self.is_package(link):
-            raise ValueError('{!r} is a package, does not have links'.format(link))
-
         self.info('Reading links from {!r}'.format(link))
+
+        if self.has_package_suffix(link):
+            return [link]
 
         try:
             entries = os.listdir(link)
@@ -112,8 +112,8 @@ class Damnode(object):
         resp = requests.get(link)
         return sorted(read_html(resp.text))
 
-    def is_package(self, link):
-        for suffix in self.KNOWN_PACKAGE_SUFFIXES:
+    def has_package_suffix(self, link):
+        for suffix in self.all_package_suffixes:
             if link.endswith(suffix):
                 return True
 
@@ -121,6 +121,7 @@ class Damnode(object):
 
     @contextmanager
     def download(self, link):
+        # Not using has_package_suffix(), need to be strict when downloading
         if not self.is_package(link):
             raise ValueError('{!r} is not a package and cannot be downloaded'.format(link))
 
@@ -156,12 +157,20 @@ class Damnode(object):
             os.rename(temp_file, cached_file)
             yield cached_file
 
+    def is_package(self, link):
+        if not self.has_package_suffix(link):
+            return False
+
+        try:
+            self.parse_package(osp.basename(link))
+        except ValueError:
+            return False
+
+        return True
+
     @contextmanager
     def _ensure_cache_dir(self):
-        if self.cache:
-            if not self.cache_dir:
-                self.cache_dir = self.DEFAULT_CACHE_DIR
-
+        if self.enable_cache:
             try:
                 os.makedirs(self.cache_dir)
             except EnvironmentError as e:
@@ -182,7 +191,7 @@ class Damnode(object):
             self.cache_dir = orig_cache_dir
 
     def _iter_resp_chunks(self, resp):
-        chunk_size = self.DOWNLOAD_CHUNK_SIZE
+        chunk_size = self.download_chunk_size
         try:
             content_length = int(resp.headers.get('content-length', ''))
         except ValueError:
@@ -244,21 +253,22 @@ class DamnodeCommand(click.Group):
               default=False,
               help='Verbose output')
 @click.pass_obj
-def cli(damnode, verbose):
+def main(damnode, verbose):
     damnode.verbose = verbose
 
 
-@cli.command('install')
+@main.command()
 @click.help_option('-h', '--help')
 @click.option('-i', '--index',
-              help='Node index directory or URL (default: {!r})'.format(Damnode.DEFAULT_INDEX_URL))
+              multiple=True,
+              help='Node index directory or URL (default: {!r})'.format(Damnode.default_index))
 @click.option('--no-cache', is_flag=True,
               help='Do not cache downloads')
 @click.option('--cache-dir',
-              help='Directory to cache downloads (default: {!r})'.format(Damnode.DEFAULT_CACHE_DIR))
+              help='Directory to cache downloads (default: {!r})'.format(Damnode.default_cache_dir))
 @click.argument('hint', required=False)
 @click.pass_obj
-def cli_install(damnode, index, no_cache, cache_dir, hint):
+def install(damnode, index, no_cache, cache_dir, hint):
     '''
     Install Node of latest version or from the given HINT, it is detected as follows:
 
@@ -273,17 +283,23 @@ def cli_install(damnode, index, no_cache, cache_dir, hint):
 
     Only tar.gz and zip formats are supported.
     '''
-    damnode.index = index
-    damnode.cache = not no_cache
-    damnode.cache_dir = cache_dir
+    if index:
+        damnode.indices = index
+
+    if no_cache:
+        damnode.enable_cache = False
+
+    if cache_dir:
+        damnode.cache_dir = cache_dir
+
     damnode.install(hint)
 
 
-@cli.command('uninstall')
+@main.command()
 @click.help_option('-h', '--help')
 @click.confirmation_option('--yes',
                            help='Confirm uninstallation',
                            prompt='This will remove Node and only its bundled node_modules, continue?')
 @click.pass_obj
-def cli_uninstall(damnode):
+def uninstall(damnode):
     damnode.uninstall()

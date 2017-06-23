@@ -47,7 +47,7 @@ def main():
                 'node=damnode:cmd_node',
                 'npm=damnode:cmd_npm',
 
-                'damnode2=damnode2:cli',
+                'damnode2=damnode2:main',
             ],
         },
         'test_suite': 'testdamnode',

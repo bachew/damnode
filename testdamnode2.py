@@ -21,7 +21,7 @@ class NameTest(TestCase):
         self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
         self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
 
-    # TODO: use parse_package in is_package, update IoTest
+    # TODO: convert links to mapping
 
 
 class IoTest(TestCase):
@@ -54,17 +54,14 @@ class IoTest(TestCase):
         entries = d.read_links('https://nodejs.org/dist/latest-v5.x/')
         self.assertTrue('https://nodejs.org/dist/latest-v5.x/node-v5.12.0-linux-arm64.tar.gz' in entries, entries)
 
-    def test_is_package(self):
+    def test_has_package_suffix(self):
         d = self.damnode()
-        self.assertTrue(d.is_package('v4.tar.gz'))
-        self.assertTrue(d.is_package('v5.zip'))
+        self.assertTrue(d.has_package_suffix('v4.tar.gz'))
+        self.assertTrue(d.has_package_suffix('v5.zip'))
 
     def test_read_links_package(self):
         d = self.damnode()
-        self.assertRaisesRegexp(
-            ValueError,
-            r"'v6\.xz' is a package, does not have links",
-            d.read_links, 'v6.xz')
+        self.assertEqual(['v6.xz'], d.read_links('v6.xz'))
 
     def test_download_local(self):
         d = self.damnode()
@@ -72,38 +69,40 @@ class IoTest(TestCase):
         with d.download(data_dir('index/v2.tar.gz')) as filename:
             self.assertEqual(data_dir('index/v2.tar.gz'), filename)
 
-    def test_download_index(self):
+    def test_download_not_package(self):
         d = self.damnode()
         try:
-            with d.download('https://nodejs.org/dist/') as filename:
+            with d.download('https://nodejs.org/dist/not-node.zip') as filename:
                 pass
         except ValueError as e:
-            self.assertEqual("'https://nodejs.org/dist/' is not a package and cannot be downloaded", str(e))
+            self.assertEqual("'https://nodejs.org/dist/not-node.zip' is not a package and cannot be downloaded", str(e))
         else:
             self.fail('Exception not raised')
 
     def test_download_local(self):
         d = self.damnode()
-        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-headers.tar.xz'
-        cached_file = osp.join(d.cache_dir, 'node-v6.11.0-headers.tar.xz')
+        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-darwin-x64.tar.gz'
+        cached_file = osp.join(d.cache_dir, 'node-v6.11.0-darwin-x64.tar.gz')
 
         with d.download(url) as filename:
             self.assertEqual(cached_file, filename)
             mtime = int(osp.getmtime(filename))  # shutil.copystat() is not perfect
 
         d.cache_dir = data_dir('cache2')
-        shutil.rmtree(d.cache_dir)
+
+        if osp.exists(d.cache_dir):
+            shutil.rmtree(d.cache_dir)
 
         with d.download(cached_file) as filename:
-            self.assertEqual(data_dir('cache2/node-v6.11.0-headers.tar.xz'), filename)
+            self.assertEqual(data_dir('cache2/node-v6.11.0-darwin-x64.tar.gz'), filename)
             self.assertEqual(mtime, int(osp.getmtime(filename)))
 
     def test_download_remote(self):
         d = self.damnode()
-        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-headers.tar.xz'
+        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-win-x64.zip'
 
         with d.download(url) as filename:
-            self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-headers.tar.xz'), filename)
+            self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-win-x64.zip'), filename)
             mtime = osp.getmtime(filename)
 
         with d.download(url) as filename:
@@ -111,14 +110,15 @@ class IoTest(TestCase):
 
     def test_download_no_cache(self):
         d = self.damnode()
-        d.cache = False
-        d.cache_dir = 'does-not-matter'
+        d.enable_cache = False
+        unused_cache_dir = data_dir('cache3')
+        d.cache_dir = unused_cache_dir
 
-        with d.download(data_dir('cache/node-v6.11.0-headers.tar.xz')) as filename:
-            self.assertNotEqual('does-not-matter', d.cache_dir)
+        with d.download(data_dir('cache/node-v6.11.0-win-x64.zip')) as filename:
+            self.assertNotEqual(unused_cache_dir, d.cache_dir)
             self.assertTrue(filename.startswith(d.cache_dir))
 
-        self.assertEqual('does-not-matter', d.cache_dir)
+        self.assertEqual(unused_cache_dir, d.cache_dir)
 
 
 def data_dir(*path):
