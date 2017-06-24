@@ -1,30 +1,13 @@
 # -*- coding: utf-8 -*-
 import shutil
+import tempfile
+from contextlib import contextmanager
 from unittest import TestCase, skip
 from damnode2 import Damnode
 from os import path as osp
 
 
-class NameTest(TestCase):
-    def test_parse_package(self):
-        d = Damnode()
-        self.assertEqual(((8, 1, 2), 'darwin', 'x64', 'tar.gz'),
-                          d.parse_package('node-v8.1.2-darwin-x64.tar.gz'))
-        self.assertRaises(ValueError, d.parse_package, 'foobar-v8.1.2-darwin-x64.tar.gz')
-        self.assertRaises(ValueError, d.parse_package, 'node-v8.1.2-darwin-x64')
-
-    def test_parse_version(self):
-        d = Damnode()
-        self.assertEqual((4, None, None), d.parse_version('v4'))
-        self.assertEqual((5, 12, None), d.parse_version('5.12'))
-        self.assertEqual((6, 11, 0), d.parse_version('v6.11.0'))
-        self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
-        self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
-
-    # TODO: convert links to mapping
-
-
-class LinksTest(TestCase):
+class LinkTest(TestCase):
     def test_read_dir_links(self):
         d = create_damnode()
         entries = d.read_links(data_dir('local-index'))
@@ -62,6 +45,32 @@ class LinksTest(TestCase):
         self.assertEqual(['node-v6.xz'], d.read_links('node-v6.xz'))
 
 
+class NameTest(TestCase):
+    def test_parse_package(self):
+        d = Damnode()
+
+        self.assertRaisesRegexp(
+            ValueError,
+            r"Invalid package name 'node.*', suffix must be one of \[",
+            d.parse_package, 'node-v8.1.2-win-x64.superzip')
+
+        self.assertEqual(((8, 1, 2), 'linux', 'x64', 'tar.gz'),
+                          d.parse_package('node-v8.1.2-linux-x64.tar.gz'))
+
+        self.assertRaisesRegexp(
+            ValueError,
+            r"Invalid package name 'foobar.*', it does not match regex \^node-",
+            d.parse_package, 'foobar-v8.1.2-darwin-x64.tar.gz')
+
+    def test_parse_version(self):
+        d = Damnode()
+        self.assertEqual((4, None, None), d.parse_version('v4'))
+        self.assertEqual((5, 12, None), d.parse_version('5.12'))
+        self.assertEqual((6, 11, 0), d.parse_version('v6.11.0'))
+        self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
+        self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
+
+
 class DownloadTest(TestCase):
     def test_download_local_package(self):
         d = create_damnode()
@@ -86,7 +95,7 @@ class DownloadTest(TestCase):
             with d.download_package('https://nodejs.org/dist/not-node.zip') as filename:
                 pass
         except ValueError as e:
-            self.assertEqual("'https://nodejs.org/dist/not-node.zip' is not a package and cannot be downloaded", str(e))
+            pass
         else:
             self.fail('Exception not raised')
 
@@ -122,6 +131,22 @@ class DownloadTest(TestCase):
         self.assertFalse(osp.exists(unused_cache_dir))
 
 
+class InstallTest(TestCase):
+    def test_install_tgz(self):
+        download_install('https://nodejs.org/dist/v8.1.2/node-v8.1.2-linux-x64.tar.gz')
+
+    def test_install_zip(self):
+        self.download_install('https://nodejs.org/dist/v8.1.2/node-v8.1.2-win-x64.zip')
+
+    def download_install(self, url):
+        d = Damnode()
+        d.verbose = True
+        clean = False  # TODO: remove after testing
+
+        with d.download_package(url) as filename, temp_dir(clean) as prefix:
+            d.install_package(filename, prefix)
+
+
 def data_dir(*path):
     return osp.abspath(osp.join(osp.dirname(__file__), 'testdata', *path))
 
@@ -131,3 +156,13 @@ def create_damnode():
     d.cache_dir = data_dir('cache')
     d.verbose = True
     return d
+
+
+@contextmanager
+def temp_dir(clean=True):
+    dirname = tempfile.mkdtemp()
+    try:
+        yield dirname
+    finally:
+        if clean:
+            shutil.rmtree(dirname)

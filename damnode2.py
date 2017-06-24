@@ -7,8 +7,11 @@ import platform
 import re
 import requests
 import shutil
+import sys
+import tarfile
 import tempfile
 import traceback
+import zipfile
 from click import ClickException
 from contextlib import contextmanager
 from os import path as osp
@@ -52,7 +55,7 @@ class Damnode(object):
     def install(self, hint):
         if hint and self.has_package_suffix(hint):
             with self.download_package(hint) as filename:
-                self.install_package(filename)  # TODO: implement
+                self.install_package(filename, sys.prefix)  # TODO: should we have --prefix?
             return
 
         version = None
@@ -70,55 +73,9 @@ class Damnode(object):
         self.debug('platf = {!r}'.format(platf))
         self.debug('arch = {!r}'.format(arch))
         self.debug('fmt = {!r}'.format(fmt))
-        # self.info('{} {} {} {}'.format(version, platf, arch, fmt))
 
     def uninstall(self):
         self.info('TODO')
-
-    def parse_package(self, name):
-        m = self._package_re.match(name)
-
-        if not m:
-            raise ValueError
-
-        version = self.parse_version(m.group('version'))
-        return version, m.group('platform'), m.group('arch'), m.group('format')
-
-    def parse_version(self, name):
-        m = self._version_re.match(name)
-
-        if not m:
-            raise ValueError
-
-        opt_int = lambda i: None if i is None else int(i)
-        return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
-
-    def detect_platform_format(self):
-        mapping = [
-            (r'^windows$', 'win'),
-            # TODO: aix, sunos
-        ]
-        platf = self._detect(mapping, platform.system())
-        fmt = 'zip' if plat == 'win' else 'tar.gz'
-        return platf, fmt
-
-    def detect_architecture(self):
-        mapping = [
-            (r'^x86[^\d]64$', 'x64'),
-            (r'^amd64$', 'x64'),
-            (r'^x86[^\d]', 'x86'),
-            # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
-        ]
-        return self._detect(mapping, platform.machine())
-
-    def _detect(self, mapping, value):
-        value = value.lower()
-
-        for pattern, value2 in mapping:
-            if re.match(pattern, value):
-                return value2
-
-        return value
 
     def read_links(self, link):
         self.info('Reading links from {!r}'.format(link))
@@ -161,11 +118,8 @@ class Damnode(object):
 
     @contextmanager
     def download_package(self, link):
-        # Not using has_package_suffix(), need to be strict when downloading
-        if not self.is_package(link):
-            raise ValueError('{!r} is not a package and cannot be downloaded'.format(link))
-
         name = osp.basename(link)
+        self.parse_package_name(name)
 
         with self._ensure_cache_dir():
             cached_file = osp.join(self.cache_dir, name)
@@ -184,29 +138,51 @@ class Damnode(object):
 
             temp_fd, temp_file = tempfile.mkstemp(prefix='{}.download-'.format(name),
                                                   dir=self.cache_dir)
-            self.info('Downloading {!r}'.format(link))
-            self.debug('Downloading to temp file {!r}'.format(temp_file))
+            try:
+                self.info('Downloading {!r}'.format(link))
+                self.debug('Downloading to temp file {!r}'.format(temp_file))
 
-            with open(temp_file, 'wb') as f:
-                resp = requests.get(link, stream=True)
+                with open(temp_file, 'wb') as f:
+                    resp = requests.get(link, stream=True)
 
-                for chunk in self._iter_resp_chunks(resp):
-                    f.write(chunk)
+                    for chunk in self._iter_resp_chunks(resp):
+                        f.write(chunk)
 
-            self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
-            os.rename(temp_file, cached_file)
+                self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
+            except:
+                os.remove(temp_file)
+                raise
+            else:
+                os.rename(temp_file, cached_file)
+
             yield cached_file
 
-    def is_package(self, link):
-        if not self.has_package_suffix(link):
-            return False
+    def install_package(self, filename, prefix):
+        if filename.endswith('.tar.gz'):
+            self.install_tgz_package(filename, prefix)
+        elif filename.endswith('.zip'):
+            self.install_zip_package(filename, prefix)
+        else:
+            raise ValueError('Only tar.gz and zip formats are supported')
 
-        try:
-            self.parse_package(osp.basename(link))
-        except ValueError:
-            return False
+    def install_tgz_package(self, tgz_file, prefix):
+        with tarfile.open(tgz_file) as ar:
+            base_dir = osp.basename(tgz_file[:-7])  # remove .tar.gz
 
-        return True
+            for member in ar:
+                member.name = osp.relpath(member.name, base_dir)
+                out_file = osp.join(prefix, member.name)
+                self.debug('extract {} -> {}'.format(member.name, out_file))
+                ar.extract(member, prefix)
+
+    def install_zip_package(self, zip_file, prefix):
+        with zipfile.ZipFile(zip_file) as ar:
+            base_dir = osp.basename(zip_file[:-4])  # remove .zip
+
+            for in_file in ar.namelist():
+                out_file = osp.join(prefix, osp.relpath(in_file, base_dir))
+                self.debug('extract {} -> {}'.format(in_file, out_file))
+                ar.extract(in_file, out_file)
 
     @contextmanager
     def _ensure_cache_dir(self):
@@ -244,6 +220,59 @@ class Damnode(object):
                 for chunk in resp.iter_content(chunk_size=chunk_size):
                     yield chunk
                     progress.update(chunk_size)
+
+    def parse_package_name(self, name):
+        if not self.has_package_suffix(name):
+            raise ValueError('Invalid package name {!r}, suffix must be one of {!r}'.format(
+                name, self.all_package_suffixes))
+
+        m = self._package_re.match(name)
+
+        if not m:
+            raise ValueError('Invalid package name {!r}, it does not match regex {}'.format(
+                name, self._package_re.pattern))
+
+        version = self.parse_version(m.group('version'))
+        platf = m.group('platform')
+        arch = m.group('arch')
+        fmt = m.group('format')
+        return version, platf, arch, fmt
+
+    def parse_version(self, name):
+        m = self._version_re.match(name)
+
+        if not m:
+            raise ValueError
+
+        opt_int = lambda i: None if i is None else int(i)
+        return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
+
+    def detect_platform_format(self):
+        mapping = [
+            (r'^windows$', 'win'),
+            # TODO: aix, sunos
+        ]
+        platf = self._detect(mapping, platform.system())
+        fmt = 'zip' if plat == 'win' else 'tar.gz'
+        return platf, fmt
+
+    def detect_architecture(self):
+        mapping = [
+            (r'^x86[^\d]64$', 'x64'),
+            (r'^amd64$', 'x64'),
+            (r'^x86[^\d]', 'x86'),
+            # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
+        ]
+        return self._detect(mapping, platform.machine())
+
+    def _detect(self, mapping, value):
+        value = value.lower()
+
+        for pattern, value2 in mapping:
+            if re.match(pattern, value):
+                return value2
+
+        return value
 
 
 class HtmlLinksParser(HTMLParser):
