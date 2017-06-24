@@ -8,6 +8,11 @@ from os import path as osp
 
 
 class LinkTest(TestCase):
+    def test_read_remote_links(self):
+        d = create_damnode()
+        entries = d.read_links('https://nodejs.org/dist/latest-v5.x/')
+        self.assertTrue('https://nodejs.org/dist/latest-v5.x/node-v5.12.0-linux-arm64.tar.gz' in entries, entries)
+
     def test_read_dir_links(self):
         d = create_damnode()
         entries = d.read_links(data_dir('local-index'))
@@ -30,37 +35,39 @@ class LinkTest(TestCase):
         ]
         self.assertEqual(expected, entries)
 
-    def test_read_remote_links(self):
-        d = create_damnode()
-        entries = d.read_links('https://nodejs.org/dist/latest-v5.x/')
-        self.assertTrue('https://nodejs.org/dist/latest-v5.x/node-v5.12.0-linux-arm64.tar.gz' in entries, entries)
-
-    def test_has_package_suffix(self):
-        d = create_damnode()
-        self.assertTrue(d.has_package_suffix('file.tar.gz'))
-        self.assertTrue(d.has_package_suffix('file.zip'))
-
     def test_read_links_package(self):
         d = create_damnode()
         self.assertEqual(['node-v6.xz'], d.read_links('node-v6.xz'))
 
 
 class NameTest(TestCase):
-    def test_parse_package(self):
+    def test_has_package_suffix(self):
+        d = Damnode()
+        self.assertTrue(d.has_package_suffix('file.tar.gz'))
+        self.assertTrue(d.has_package_suffix('file.zip'))
+
+    def test_is_url(self):
+        d = Damnode()
+        self.assertTrue(d.is_url('http://localhost'))
+        self.assertTrue(d.is_url('https://localhost'))
+        self.assertTrue(d.is_url('file://localhost'))
+        self.assertFalse(d.is_url('~/Download'))
+
+    def test_parse_package_name(self):
         d = Damnode()
 
         self.assertRaisesRegexp(
             ValueError,
             r"Invalid package name 'node.*', suffix must be one of \[",
-            d.parse_package, 'node-v8.1.2-win-x64.superzip')
+            d.parse_package_name, 'node-v8.1.2-win-x64.superzip')
 
         self.assertEqual(((8, 1, 2), 'linux', 'x64', 'tar.gz'),
-                          d.parse_package('node-v8.1.2-linux-x64.tar.gz'))
+                          d.parse_package_name('node-v8.1.2-linux-x64.tar.gz'))
 
         self.assertRaisesRegexp(
             ValueError,
             r"Invalid package name 'foobar.*', it does not match regex \^node-",
-            d.parse_package, 'foobar-v8.1.2-darwin-x64.tar.gz')
+            d.parse_package_name, 'foobar-v8.1.2-darwin-x64.tar.gz')
 
     def test_parse_version(self):
         d = Damnode()
@@ -133,18 +140,29 @@ class DownloadTest(TestCase):
 
 class InstallTest(TestCase):
     def test_install_tgz(self):
-        download_install('https://nodejs.org/dist/v8.1.2/node-v8.1.2-linux-x64.tar.gz')
+        with temp_dir() as prefix:
+            url = 'https://nodejs.org/dist/v8.1.2/node-v8.1.2-linux-x64.tar.gz'
+            self.download_install(url, prefix)
+            self.assertFalse(osp.exists(osp.join(prefix, 'CHANGELOG.md')))
+            self.assertFalse(osp.exists(osp.join(prefix, 'LICENSE')))
+            self.assertFalse(osp.exists(osp.join(prefix, 'README.md')))
+            self.assertTrue(osp.isfile(osp.join(prefix, 'bin/node')))
 
-    def test_install_zip(self):
-        self.download_install('https://nodejs.org/dist/v8.1.2/node-v8.1.2-win-x64.zip')
+    def test_install_win_zip(self):
+        with temp_dir() as prefix:
+            url = 'https://nodejs.org/dist/v8.1.2/node-v8.1.2-win-x64.zip'
+            self.download_install(url, prefix)
+            self.assertFalse(osp.exists(osp.join(prefix, 'README.md')))
+            self.assertTrue(osp.isdir(osp.join(prefix, 'node_modules')))
+            self.assertTrue(osp.isfile(osp.join(prefix, 'node.exe')))
 
-    def download_install(self, url):
+    def download_install(self, url, prefix):
         d = Damnode()
-        d.verbose = True
-        clean = False  # TODO: remove after testing
+        d.prefix = prefix
+        # d.verbose = True
 
-        with d.download_package(url) as filename, temp_dir(clean) as prefix:
-            d.install_package(filename, prefix)
+        with d.download_package(url) as filename:
+            d.install_package(filename)
 
 
 def data_dir(*path):

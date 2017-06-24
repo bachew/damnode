@@ -14,6 +14,7 @@ import traceback
 import zipfile
 from click import ClickException
 from contextlib import contextmanager
+from fnmatch import fnmatch
 from os import path as osp
 from six.moves.html_parser import HTMLParser
 from six.moves.urllib import parse as urlparse
@@ -27,15 +28,7 @@ class Damnode(object):
 
     default_cache_dir = _get_default_cache_dir()
     default_index = 'https://nodejs.org/dist/'
-
-    all_package_suffixes = [
-        '.gz',
-        '.msi',
-        '.pkg',
-        '.xz',
-        '.zip',
-    ]
-    download_chunk_size = 10 * 1024
+    default_prefix = sys.prefix
 
     _package_re = re.compile(r'^node-(?P<version>[^-]+)-(?P<platform>[^-]+)-(?P<arch>[^\.]+)\.(?P<format>.+)$')
     _version_re = re.compile(r'^v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?$')
@@ -44,6 +37,10 @@ class Damnode(object):
         self.verbose = False
         self.enable_cache = True
         self.cache_dir = self.default_cache_dir
+        self.download_chunk_size = 10 * 1024
+        self.package_suffixes = ['.gz', '.msi', '.pkg', '.xz', '.zip']
+        self.url_prefixes = ['http://', 'https://', 'file://']
+        self.prefix = self.default_prefix
 
     def info(self, msg):
         click.echo(str(msg))
@@ -55,7 +52,7 @@ class Damnode(object):
     def install(self, hint):
         if hint and self.has_package_suffix(hint):
             with self.download_package(hint) as filename:
-                self.install_package(filename, sys.prefix)  # TODO: should we have --prefix?
+                self.install_package(filename)
             return
 
         version = None
@@ -83,6 +80,10 @@ class Damnode(object):
         if self.has_package_suffix(link):
             return [link]
 
+        if self.is_url(link):
+            resp = requests.get(link)
+            return read_html(resp.text)
+
         try:
             entries = os.listdir(link)
         except EnvironmentError as e:
@@ -106,16 +107,6 @@ class Damnode(object):
         else:
             return read_html(html)
 
-        resp = requests.get(link)
-        return read_html(resp.text)
-
-    def has_package_suffix(self, link):
-        for suffix in self.all_package_suffixes:
-            if link.endswith(suffix):
-                return True
-
-        return False
-
     @contextmanager
     def download_package(self, link):
         name = osp.basename(link)
@@ -127,62 +118,85 @@ class Damnode(object):
             if osp.isfile(cached_file):
                 self.info('Using cached {!r}'.format(cached_file))
                 yield cached_file
-                return
+            elif self.is_url(link):
+                temp_fd, temp_file = tempfile.mkstemp(prefix='{}.download-'.format(name),
+                                                      dir=self.cache_dir)
+                try:
+                    self.info('Downloading {!r}'.format(link))
+                    self.debug('Downloading to temp file {!r}'.format(temp_file))
 
-            if osp.isfile(link):
+                    with open(temp_file, 'wb') as f:
+                        resp = requests.get(link, stream=True)
+
+                        for chunk in self._iter_resp_chunks(resp):
+                            f.write(chunk)
+
+                    self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
+                except:
+                    os.remove(temp_file)
+                    raise
+                else:
+                    os.rename(temp_file, cached_file)
+
+                yield cached_file
+            else:
                 self.info('Copying {!r}'.format(link))
                 shutil.copyfile(link, cached_file)
                 shutil.copystat(link, cached_file)
                 yield cached_file
-                return
 
-            temp_fd, temp_file = tempfile.mkstemp(prefix='{}.download-'.format(name),
-                                                  dir=self.cache_dir)
-            try:
-                self.info('Downloading {!r}'.format(link))
-                self.debug('Downloading to temp file {!r}'.format(temp_file))
+    def install_package(self, package_file):
+        version, platf, arch, fmt = self.parse_package_name(osp.basename(package_file))
+        allowed_root_files = []
 
-                with open(temp_file, 'wb') as f:
-                    resp = requests.get(link, stream=True)
+        if platf == 'win':
+            allowed_root_files.extend(['node*', 'npm*', '*.exe', '*.cmd', '*.bat'])
 
-                    for chunk in self._iter_resp_chunks(resp):
-                        f.write(chunk)
+        def is_root_file_allowed(filename):
+            for pattern in allowed_root_files:
+                if fnmatch(filename, pattern):
+                    return True
+            return False
 
-                self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
-            except:
-                os.remove(temp_file)
-                raise
+        for out_file, extract in self.iter_package_members(package_file):
+            if not osp.dirname(out_file) and not is_root_file_allowed(out_file):
+                self.debug('Skip {!r}'.format(out_file))
             else:
-                os.rename(temp_file, cached_file)
+                self.debug('Install {!r}'.format(osp.join(self.prefix, out_file)))
+                extract(self.prefix)
 
-            yield cached_file
+    def iter_package_members(self, package_file):
+        tgz_suffix = '.tar.gz'
+        zip_suffix = '.zip'
 
-    def install_package(self, filename, prefix):
-        if filename.endswith('.tar.gz'):
-            self.install_tgz_package(filename, prefix)
-        elif filename.endswith('.zip'):
-            self.install_zip_package(filename, prefix)
-        else:
-            raise ValueError('Only tar.gz and zip formats are supported')
+        def iter_tgz():
+            with tarfile.open(package_file) as ar:
+                base_dir = osp.basename(package_file[:-len(tgz_suffix)])
 
-    def install_tgz_package(self, tgz_file, prefix):
-        with tarfile.open(tgz_file) as ar:
-            base_dir = osp.basename(tgz_file[:-7])  # remove .tar.gz
+                for member in ar:
+                    if not member.isdir():
+                        member.name = osp.relpath(member.name, base_dir)
+                        yield member.name, lambda p: ar.extract(member, p)
 
-            for member in ar:
-                member.name = osp.relpath(member.name, base_dir)
-                out_file = osp.join(prefix, member.name)
-                self.debug('extract {} -> {}'.format(member.name, out_file))
-                ar.extract(member, prefix)
+        def iter_zip():
+            with zipfile.ZipFile(package_file) as ar:
+                base_dir = osp.basename(package_file[:-len(zip_suffix)])
 
-    def install_zip_package(self, zip_file, prefix):
-        with zipfile.ZipFile(zip_file) as ar:
-            base_dir = osp.basename(zip_file[:-4])  # remove .zip
+                for info in ar.infolist():
+                    if not info.filename.endswith('/'):
+                        info.filename = osp.relpath(info.filename, base_dir)
+                        yield info.filename, lambda p: ar.extract(info, p)
 
-            for in_file in ar.namelist():
-                out_file = osp.join(prefix, osp.relpath(in_file, base_dir))
-                self.debug('extract {} -> {}'.format(in_file, out_file))
-                ar.extract(in_file, out_file)
+        mapping = [
+            (tgz_suffix, iter_tgz),
+            (zip_suffix, iter_zip),
+        ]
+
+        for suffix, func in mapping:
+            if package_file.endswith(suffix):
+                return func()
+
+        return ValueError
 
     @contextmanager
     def _ensure_cache_dir(self):
@@ -221,10 +235,24 @@ class Damnode(object):
                     yield chunk
                     progress.update(chunk_size)
 
+    def is_url(self, link):
+        for prefix in self.url_prefixes:
+            if link.startswith(prefix):
+                return True
+
+        return False
+
+    def has_package_suffix(self, link):
+        for suffix in self.package_suffixes:
+            if link.endswith(suffix):
+                return True
+
+        return False
+
     def parse_package_name(self, name):
         if not self.has_package_suffix(name):
             raise ValueError('Invalid package name {!r}, suffix must be one of {!r}'.format(
-                name, self.all_package_suffixes))
+                name, self.package_suffixes))
 
         m = self._package_re.match(name)
 
@@ -335,9 +363,10 @@ def main(damnode, verbose):
               help='Do not cache downloads')
 @click.option('--cache-dir',
               help='Directory to cache downloads (default: {!r})'.format(Damnode.default_cache_dir))
+@click.option('--prefix', help='Prefix directory to install to (default: {!r})'.format(Damnode.default_prefix))
 @click.argument('hint', required=False)
 @click.pass_obj
-def install(damnode, index, no_cache, cache_dir, hint):
+def install(damnode, index, no_cache, cache_dir, prefix, hint):
     '''
     Install Node of latest version or from the given HINT, it is detected as follows:
 
@@ -348,7 +377,6 @@ def install(damnode, index, no_cache, cache_dir, hint):
     4. Package URL (e.g. https://nodejs.org/dist/v4.8.3/node-v4.8.3-linux-x64.tar.gz)
     5. Packages directory (e.g. /var/www/html/node/v5.12.0/)
     6. Version URL (e.g. https://nodejs.org/dist/v5.12.0/)
-    7. LTS name (e.g. argon, Boron), case insensitive
 
     Only tar.gz and zip formats are supported.
     '''
@@ -360,6 +388,9 @@ def install(damnode, index, no_cache, cache_dir, hint):
 
     if cache_dir:
         damnode.cache_dir = cache_dir
+
+    if prefix:
+        damnode.prefix = prefix
 
     damnode.install(hint)
 
