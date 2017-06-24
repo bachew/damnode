@@ -95,11 +95,12 @@ class Damnode(object):
 
     def detect_platform_format(self):
         mapping = [
-            (r'^windows$', ('win', 'zip')),
+            (r'^windows$', 'win'),
             # TODO: aix, sunos
-            (r'.*', ('linux', 'tar.gz'))
         ]
-        return self._detect(mapping, platform.system())
+        platf = self._detect(mapping, platform.system())
+        fmt = 'zip' if plat == 'win' else 'tar.gz'
+        return platf, fmt
 
     def detect_architecture(self):
         mapping = [
@@ -107,7 +108,6 @@ class Damnode(object):
             (r'^amd64$', 'x64'),
             (r'^x86[^\d]', 'x86'),
             # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
-            (r'.*', 'x64'),
         ]
         return self._detect(mapping, platform.machine())
 
@@ -118,7 +118,7 @@ class Damnode(object):
             if re.match(pattern, value):
                 return value2
 
-        raise ValueError
+        return value
 
     def read_links(self, link):
         self.info('Reading links from {!r}'.format(link))
@@ -134,7 +134,7 @@ class Damnode(object):
             else:
                 raise
         else:
-            return sorted([osp.join(link, e) for e in entries])
+            return sorted([osp.join(link, e) for e in entries])  # sort from file system
 
         read_html = lambda h: HtmlLinksParser(link, h).links
 
@@ -147,10 +147,10 @@ class Damnode(object):
             else:
                 raise
         else:
-            return sorted(read_html(html))
+            return read_html(html)
 
         resp = requests.get(link)
-        return sorted(read_html(resp.text))
+        return read_html(resp.text)
 
     def has_package_suffix(self, link):
         for suffix in self.all_package_suffixes:

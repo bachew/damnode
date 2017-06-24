@@ -24,53 +24,64 @@ class NameTest(TestCase):
     # TODO: convert links to mapping
 
 
-class IoTest(TestCase):
-    def damnode(self):
-        d = Damnode()
-        d.verbose = True
-        d.cache_dir = data_dir('cache')
-        return d
-
-    def test_read_links_dir(self):
-        d = self.damnode()
-        entries = d.read_links(data_dir('index'))
+class LinksTest(TestCase):
+    def test_read_dir_links(self):
+        d = create_damnode()
+        entries = d.read_links(data_dir('local-index'))
         expected = [
-            data_dir('index/v1'),
-            data_dir('index/v2.tar.gz'),
+            data_dir('local-index/node-v8.1.2-linux-arm64.tar.gz'),
+            data_dir('local-index/old.html'),
+            data_dir('local-index/v7.10.0'),
         ]
         self.assertEqual(expected, entries)
 
     def test_read_local_links(self):
-        d = self.damnode()
-        entries = d.read_links(data_dir('index2/index.html'))
+        d = create_damnode()
+        entries = d.read_links(data_dir('local-index/old.html'))
         expected = [
-            data_dir('index2/v3.zip'),
-            "https://nodejs.org/dist/latest-v4.x/node-v4.8.3.tar.gz",
+            data_dir('local-index/v3'),
+            "https://nodejs.org/dist/latest-v4.x",
+            "https://nodejs.org/dist/latest-v5.x",
+            "https://nodejs.org/dist/latest-v6.x",
+            data_dir('local-index/v7.10.0'),
         ]
         self.assertEqual(expected, entries)
 
     def test_read_remote_links(self):
-        d = self.damnode()
+        d = create_damnode()
         entries = d.read_links('https://nodejs.org/dist/latest-v5.x/')
         self.assertTrue('https://nodejs.org/dist/latest-v5.x/node-v5.12.0-linux-arm64.tar.gz' in entries, entries)
 
     def test_has_package_suffix(self):
-        d = self.damnode()
-        self.assertTrue(d.has_package_suffix('v4.tar.gz'))
-        self.assertTrue(d.has_package_suffix('v5.zip'))
+        d = create_damnode()
+        self.assertTrue(d.has_package_suffix('file.tar.gz'))
+        self.assertTrue(d.has_package_suffix('file.zip'))
 
     def test_read_links_package(self):
-        d = self.damnode()
-        self.assertEqual(['v6.xz'], d.read_links('v6.xz'))
+        d = create_damnode()
+        self.assertEqual(['node-v6.xz'], d.read_links('node-v6.xz'))
 
+
+class DownloadTest(TestCase):
     def test_download_local_package(self):
-        d = self.damnode()
+        d = create_damnode()
 
-        with d.download_package(data_dir('index/v2.tar.gz')) as filename:
-            self.assertEqual(data_dir('index/v2.tar.gz'), filename)
+        with d.download_package(data_dir('local-index/node-v8.1.2-linux-arm64.tar.gz')) as filename:
+            self.assertEqual(data_dir('cache/node-v8.1.2-linux-arm64.tar.gz'), filename)
+
+    def test_download_remote_package(self):
+        d = create_damnode()
+        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-win-x64.zip'
+
+        with d.download_package(url) as filename:
+            self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-win-x64.zip'), filename)
+            mtime = osp.getmtime(filename)
+
+        with d.download_package(url) as filename:
+            self.assertEqual(mtime, osp.getmtime(filename))
 
     def test_download_none_package(self):
-        d = self.damnode()
+        d = create_damnode()
         try:
             with d.download_package('https://nodejs.org/dist/not-node.zip') as filename:
                 pass
@@ -80,7 +91,7 @@ class IoTest(TestCase):
             self.fail('Exception not raised')
 
     def test_download_cached_package(self):
-        d = self.damnode()
+        d = create_damnode()
         url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-darwin-x64.tar.gz'
         cached_file = osp.join(d.cache_dir, 'node-v6.11.0-darwin-x64.tar.gz')
 
@@ -97,19 +108,8 @@ class IoTest(TestCase):
             self.assertEqual(data_dir('cache2/node-v6.11.0-darwin-x64.tar.gz'), filename)
             self.assertEqual(mtime, int(osp.getmtime(filename)))
 
-    def test_download_remote_package(self):
-        d = self.damnode()
-        url = 'https://nodejs.org/dist/latest-v6.x/node-v6.11.0-win-x64.zip'
-
-        with d.download_package(url) as filename:
-            self.assertEqual(osp.join(d.cache_dir, 'node-v6.11.0-win-x64.zip'), filename)
-            mtime = osp.getmtime(filename)
-
-        with d.download_package(url) as filename:
-            self.assertEqual(mtime, osp.getmtime(filename))
-
     def test_download_package_no_cache(self):
-        d = self.damnode()
+        d = create_damnode()
         d.enable_cache = False
         unused_cache_dir = data_dir('cache3')
         d.cache_dir = unused_cache_dir
@@ -119,7 +119,15 @@ class IoTest(TestCase):
             self.assertTrue(filename.startswith(d.cache_dir))
 
         self.assertEqual(unused_cache_dir, d.cache_dir)
+        self.assertFalse(osp.exists(unused_cache_dir))
 
 
 def data_dir(*path):
     return osp.abspath(osp.join(osp.dirname(__file__), 'testdata', *path))
+
+
+def create_damnode():
+    d = Damnode()
+    d.cache_dir = data_dir('cache')
+    d.verbose = True
+    return d
