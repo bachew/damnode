@@ -74,6 +74,10 @@ class NameTest(TestCase):
         self.assertEqual((4, None, None), d.parse_version('v4'))
         self.assertEqual((5, 12, None), d.parse_version('5.12'))
         self.assertEqual((6, 11, 0), d.parse_version('v6.11.0'))
+        self.assertRaisesRegexp(
+            ValueError,
+            r"Invalid version '6.11.0.0', it does not match regex ",
+            d.parse_version, '6.11.0.0')
         self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
         self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
 
@@ -139,6 +143,14 @@ class DownloadTest(TestCase):
 
 
 class InstallTest(TestCase):
+    def test_install_wrong_system(self):
+        with temp_dir() as prefix:
+            url = 'https://nodejs.org/dist/latest-v8.x/node-v8.1.2-aix-ppc64.tar.gz'
+            self.assertRaisesRegexp(
+                ValueError,
+                r"Package '.*/node-v8.1.2-aix-ppc64.tar.gz' is for aix-ppc64, not for current .*",
+                self.download_install, url, prefix, False)
+
     def test_install_tgz(self):
         with temp_dir() as prefix:
             url = 'https://nodejs.org/dist/v8.1.2/node-v8.1.2-linux-x64.tar.gz'
@@ -156,13 +168,16 @@ class InstallTest(TestCase):
             self.assertTrue(osp.isdir(osp.join(prefix, 'node_modules')))
             self.assertTrue(osp.isfile(osp.join(prefix, 'node.exe')))
 
-    def download_install(self, url, prefix):
+    def download_install(self, url, prefix, allow_install_wrong_system=True):
         d = Damnode()
         d.prefix = prefix
         # d.verbose = True
+        d.allow_install_wrong_system = allow_install_wrong_system
 
         with d.download_package(url) as filename:
             d.install_package(filename)
+
+    # TODO: test uninstall
 
 
 def data_dir(*path):

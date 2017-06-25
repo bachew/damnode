@@ -2,6 +2,7 @@
 import appdirs
 import click
 import errno
+import functools
 import os
 import platform
 import re
@@ -18,6 +19,19 @@ from fnmatch import fnmatch
 from os import path as osp
 from six.moves.html_parser import HTMLParser
 from six.moves.urllib import parse as urlparse
+
+
+def cached_property(method):
+    @functools.wraps(method)
+    def wrapped(self):
+        key = '_' + method.__name__
+
+        if not hasattr(self, key):
+            setattr(self, key, method(self))
+
+        return getattr(self, key)
+
+    return property(wrapped)
 
 
 class Damnode(object):
@@ -41,6 +55,7 @@ class Damnode(object):
         self.package_suffixes = ['.gz', '.msi', '.pkg', '.xz', '.zip']
         self.url_prefixes = ['http://', 'https://', 'file://']
         self.prefix = self.default_prefix
+        self.allow_install_wrong_system = False
 
     def info(self, msg):
         click.echo(str(msg))
@@ -55,16 +70,13 @@ class Damnode(object):
                 self.install_package(filename)
             return
 
-        version = None
-
         if hint:
-            try:
-                version = self.parse_version(hint)
-            except ValueError:
-                pass
+            version = self.parse_version(hint)
+        else:
+            version = None
 
-        platf, fmt = self.detect_platform_format()
-        arch = self.detect_architecture()
+        platf, fmt = self.current_platform_format
+        arch = self.current_architecture
 
         self.debug('version = {!r}'.format(version))
         self.debug('platf = {!r}'.format(platf))
@@ -80,6 +92,8 @@ class Damnode(object):
         if self.has_package_suffix(link):
             return [link]
 
+        read_html = lambda h: HtmlLinksParser(link, h).links
+
         if self.is_url(link):
             resp = requests.get(link)
             return read_html(resp.text)
@@ -93,8 +107,6 @@ class Damnode(object):
                 raise
         else:
             return sorted([osp.join(link, e) for e in entries])  # sort from file system
-
-        read_html = lambda h: HtmlLinksParser(link, h).links
 
         try:
             with open(link, 'r') as f:
@@ -147,6 +159,12 @@ class Damnode(object):
 
     def install_package(self, package_file):
         version, platf, arch, fmt = self.parse_package_name(osp.basename(package_file))
+
+        if not self.allow_install_wrong_system:
+            if platf != self.current_platform or arch != self.current_architecture:
+                raise ValueError('Package {!r} is for {}-{}, not for current {}-{}'.format(
+                    package_file, platf, arch, self.current_platform, self.current_architecture))
+
         allowed_root_files = []
 
         if platf == 'win':
@@ -270,21 +288,28 @@ class Damnode(object):
         m = self._version_re.match(name)
 
         if not m:
-            raise ValueError
+            raise ValueError('Invalid version {!r}, it does not match regex {}'.format(
+                name, self._version_re.pattern))
 
         opt_int = lambda i: None if i is None else int(i)
         return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
 
-    def detect_platform_format(self):
+    @property
+    def current_platform(self):
+        return self.current_platform_format[0]
+
+    @cached_property
+    def current_platform_format(self):
         mapping = [
             (r'^windows$', 'win'),
             # TODO: aix, sunos
         ]
         platf = self._detect(mapping, platform.system())
-        fmt = 'zip' if plat == 'win' else 'tar.gz'
+        fmt = 'zip' if platf == 'win' else 'tar.gz'
         return platf, fmt
 
-    def detect_architecture(self):
+    @cached_property
+    def current_architecture(self):
         mapping = [
             (r'^x86[^\d]64$', 'x64'),
             (r'^amd64$', 'x64'),
