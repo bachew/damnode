@@ -75,13 +75,10 @@ class Damnode(object):
         else:
             version = None
 
-        platf, fmt = self.current_platform_format
-        arch = self.current_architecture
-
         self.debug('version = {!r}'.format(version))
-        self.debug('platf = {!r}'.format(platf))
-        self.debug('arch = {!r}'.format(arch))
-        self.debug('fmt = {!r}'.format(fmt))
+        self.debug('system = {!r}'.format(self.system))
+        self.debug('arch = {!r}'.format(self.architecture))
+        self.debug('fmt = {!r}'.format(self.archive_format))
 
     def uninstall(self):
         self.info('TODO')
@@ -161,9 +158,9 @@ class Damnode(object):
         version, platf, arch, fmt = self.parse_package_name(osp.basename(package_file))
 
         if not self.allow_install_wrong_system:
-            if platf != self.current_platform or arch != self.current_architecture:
+            if platf != self.system or arch != self.architecture:
                 raise ValueError('Package {!r} is for {}-{}, not for current {}-{}'.format(
-                    package_file, platf, arch, self.current_platform, self.current_architecture))
+                    package_file, platf, arch, self.system, self.architecture))
 
         allowed_root_files = []
 
@@ -294,38 +291,49 @@ class Damnode(object):
         opt_int = lambda i: None if i is None else int(i)
         return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
 
-    @property
-    def current_platform(self):
-        return self.current_platform_format[0]
-
     @cached_property
-    def current_platform_format(self):
-        mapping = [
-            (r'^windows$', 'win'),
-            # TODO: aix, sunos
-        ]
-        platf = self._detect(mapping, platform.system())
-        fmt = 'zip' if platf == 'win' else 'tar.gz'
-        return platf, fmt
+    def system(self):
+        return self._get_system(platform.system())
 
-    @cached_property
-    def current_architecture(self):
-        mapping = [
-            (r'^x86[^\d]64$', 'x64'),
-            (r'^amd64$', 'x64'),
-            (r'^x86[^\d]', 'x86'),
-            # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
-        ]
-        return self._detect(mapping, platform.machine())
-
-    def _detect(self, mapping, value):
+    def _get_system(self, value):
         value = value.lower()
 
-        for pattern, value2 in mapping:
-            if re.match(pattern, value):
-                return value2
+        dct = {
+            'solaris': 'sunos',
+            'windows': 'win',
+        }
+        return dct.get(value, value)
 
-        return value
+    @cached_property
+    def archive_format(self):
+        return 'zip' if self.system == 'win' else 'tar.gz'
+
+    @cached_property
+    def architecture(self):
+        return self._get_compatible_arch(platform.machine(), platform.processor())
+
+    def _get_compatible_arch(self, machine, processor):
+        patterns = [
+            (r'^i686-64$', 'x64'),
+            (r'^i686', 'x86'),
+            (r'^x86_64$', 'x64'),
+            (r'^amd64$', 'x64'),
+            (r'^ppc$', 'ppc64'),
+            (r'^powerpc$', 'ppc64'),
+            (r'^aarch64$', 'arm64'),
+            (r'^s390$', 's390x'),
+        ]
+        simpify = lambda v: '' if v is None else v.lower()
+        machine = simpify(machine)
+        processor = simpify(processor)
+
+        for patt, arch in patterns:
+            pattc = re.compile(patt)
+
+            if pattc.match(machine) or pattc.match(processor):
+                return arch
+
+        return machine
 
 
 class HtmlLinksParser(HTMLParser):

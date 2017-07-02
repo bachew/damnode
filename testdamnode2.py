@@ -81,6 +81,52 @@ class NameTest(TestCase):
         self.assertRaises(ValueError, d.parse_version, '6.11.0.0')
         self.assertRaises(ValueError, d.parse_version, 'node-v6.11.0')
 
+    def test_get_system(self):
+        d = Damnode()
+        test = lambda a, b: self.assertEqual(d._get_system(a), b)
+        test('AIX', 'aix')
+        test('Darwin', 'darwin')
+        test('Linux', 'linux')
+        test('Solaris', 'sunos')
+        test('Windows', 'win')
+
+    def test_get_compatible_arch(self):
+        d = Damnode()
+        test = lambda m, p, a: self.assertEqual(d._get_compatible_arch(m, p), a)
+
+        # https://en.wikipedia.org/wiki/Uname
+        test('armv7l', '', 'armv7l')
+        test('armv6l', '', 'armv6l')
+        test('i686', '', 'x86')
+        test('i686', 'i686', 'x86')
+        test('x86_64', '', 'x64')
+        test('x86_64', 'x86_64', 'x64')
+        test('i686-AT386', '', 'x86')
+        test('amd64', '', 'x64')
+        test('amd64', 'amd64', 'x64')
+        test('x86', 'Intel_x86_Family6_Model28_Stepping10', 'x86')
+        test('i686-64', 'x64', 'x64')
+
+        # PowerPC
+        # - https://en.wikipedia.org/wiki/Uname
+        # - https://github.com/ansible/ansible/pull/2311
+        test('ppc', '', 'ppc64')  # no ppc packages
+        test('ppc64', 'ppc64', 'ppc64')
+        test('ppc64le', 'ppc64le', 'ppc64le')
+        test('00C57D4D4C00', 'powerpc', 'ppc64')
+        test('Power Macintosh', 'powerpc', 'ppc64')
+
+        # https://stackoverflow.com/questions/31851611/differences-between-arm64-and-aarch64
+        test('arm64', '', 'arm64')
+        test('aarch64', '', 'arm64')
+
+        # https://en.wikipedia.org/wiki/Linux_on_z_Systems
+        test('s390', 's390', 's390x')  # no s390 packages
+        test('s390x', 's390x', 's390x')
+
+        # Unsupported
+        test('sparc64', 'sparc64', 'sparc64')
+
 
 class DownloadTest(TestCase):
     def test_download_local_package(self):
