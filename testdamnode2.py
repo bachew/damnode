@@ -195,7 +195,7 @@ class InstallTest(TestCase):
             self.assertRaisesRegexp(
                 ValueError,
                 r"Package '.*/node-v8.1.2-aix-ppc64.tar.gz' is for aix-ppc64, not for current .*",
-                self.download_install, url, prefix, False)
+                self.download_install, url, prefix, True)
 
     def test_install_tgz(self):
         with temp_dir() as prefix:
@@ -214,14 +214,12 @@ class InstallTest(TestCase):
             self.assertTrue(osp.isdir(osp.join(prefix, 'node_modules')))
             self.assertTrue(osp.isfile(osp.join(prefix, 'node.exe')))
 
-    def download_install(self, url, prefix, allow_install_wrong_system=True):
+    def download_install(self, url, prefix, check_sys_arch=False):
         d = Damnode()
         d.prefix = prefix
         # d.verbose = True
-        d.allow_install_wrong_system = allow_install_wrong_system
-
-        with d.download_package(url) as filename:
-            d.install_package(filename)
+        d.check_sys_arch = check_sys_arch
+        d.download_install_package(url)
 
     # TODO: test uninstall
 

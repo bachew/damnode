@@ -55,7 +55,7 @@ class Damnode(object):
         self.package_suffixes = ['.gz', '.msi', '.pkg', '.xz', '.zip']
         self.url_prefixes = ['http://', 'https://', 'file://']
         self.prefix = self.default_prefix
-        self.allow_install_wrong_system = False
+        self.check_sys_arch = False
 
     def info(self, msg):
         click.echo(str(msg))
@@ -66,22 +66,38 @@ class Damnode(object):
 
     def install(self, hint):
         if hint and self.has_package_suffix(hint):
-            with self.download_package(hint) as filename:
-                self.install_package(filename)
+            self.download_install_package(hint)
             return
 
+        indices = []
+
         if hint:
-            version = self.parse_version(hint)
+            if self.is_url(hint):
+                indices.append(hint)
+            else:
+                version = self.parse_version(hint)
         else:
             version = None
 
+        indices.append(self.default_index)
+        self.debug('indices = {!r}'.format(indices))
         self.debug('version = {!r}'.format(version))
         self.debug('system = {!r}'.format(self.system))
         self.debug('arch = {!r}'.format(self.architecture))
         self.debug('fmt = {!r}'.format(self.archive_format))
 
+        for index in indices:
+            link = find_package(index, version)
+
+            if link:
+                self.download_install_package(link)
+                return
+
     def uninstall(self):
         self.info('TODO')
+
+    def find_package(self, index, version):
+        raise NotImplementedError('TODO')
 
     def read_links(self, link):
         self.info('Reading links from {!r}'.format(link))
@@ -115,6 +131,10 @@ class Damnode(object):
                 raise
         else:
             return read_html(html)
+
+    def download_install_package(self, link):
+        with self.download_package(link) as filename:
+            self.install_package(filename)
 
     @contextmanager
     def download_package(self, link):
@@ -157,7 +177,7 @@ class Damnode(object):
     def install_package(self, package_file):
         version, platf, arch, fmt = self.parse_package_name(osp.basename(package_file))
 
-        if not self.allow_install_wrong_system:
+        if self.check_sys_arch:
             if platf != self.system or arch != self.architecture:
                 raise ValueError('Package {!r} is for {}-{}, not for current {}-{}'.format(
                     package_file, platf, arch, self.system, self.architecture))
@@ -321,7 +341,7 @@ class Damnode(object):
             (r'^ppc$', 'ppc64'),
             (r'^powerpc$', 'ppc64'),
             (r'^aarch64$', 'arm64'),
-            (r'^s390$', 's390x'),
+            (r'^s390', 's390x'),
         ]
         simpify = lambda v: '' if v is None else v.lower()
         machine = simpify(machine)
