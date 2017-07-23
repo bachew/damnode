@@ -9,7 +9,7 @@ node_modules
 /*.egg*
 /dist
 /build
-/testdata/cache*
+/test.d/cache*
 
 /tmp
 /vn2

@@ -3,7 +3,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 from unittest import TestCase, skip
-from damnode2 import Damnode
+from damnode import Damnode
 from os import path as osp
 
 
@@ -253,7 +253,7 @@ class TestDamnode(Damnode):
 
 
 def data_dir(*path):
-    return osp.abspath(osp.join(osp.dirname(__file__), 'testdata', *path))
+    return osp.abspath(osp.join(osp.dirname(__file__), 'test.d', *path))
 
 
 def create_damnode():

@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import appdirs
 import click
 import errno
 import functools
@@ -7,29 +8,23 @@ import platform
 import re
 import requests
 import shutil
-import six
-import subprocess
 import sys
-import tempfile
 import tarfile
-from argparse import ArgumentParser
-from cachecontrol import CacheControl  # TODO: not universal
-from cachecontrol.caches.file_cache import FileCache
-from click import BadParameter, ClickException, echo, ParamType
-from collections import OrderedDict
+import tempfile
+import traceback
+import zipfile
+from click import ClickException
 from contextlib import contextmanager
-from distutils import dir_util
-from bs4 import BeautifulSoup
+from fnmatch import fnmatch
 from os import path as osp
+from six.moves.html_parser import HTMLParser
 from six.moves.urllib import parse as urlparse
-from subprocess import CalledProcessError
-from zipfile import ZipFile
 
 
-def _cached_property(method):
+def cached_property(method):
     @functools.wraps(method)
     def wrapped(self):
-        key = '_{}'.format(method.__name__)
+        key = '_' + method.__name__
 
         if not hasattr(self, key):
             setattr(self, key, method(self))
@@ -39,398 +34,468 @@ def _cached_property(method):
     return property(wrapped)
 
 
-class DamNode(object):
-    index_url = 'https://nodejs.org/dist/'
-    min_version = (4, 0, 0)
-    chunk_size = 1024 * 10
-    node_dir = osp.join(osp.dirname(__file__), 'node')
+class Damnode(object):
+    def _get_default_cache_dir():
+        app_name = osp.splitext(osp.basename(__file__))[0]
+        app_author = app_name  # makes no sense to use my name
+        return appdirs.user_cache_dir(app_name, app_name)
 
-    def __init__(self, **kwargs):
-        for k, v in six.iteritems(kwargs):
-            getattr(self, k)
-            setattr(self, k, v)
+    default_cache_dir = _get_default_cache_dir()
+    default_index = 'https://nodejs.org/dist/'
+    default_prefix = sys.prefix
 
-    @property
-    def session(self):
-        if not getattr(self, '_session', None):
-            cache_dir = osp.expanduser('~/.cache/damnode/requests')
-            cache = FileCache(cache_dir)
-            self._session = CacheControl(requests.Session(), cache=cache)
+    _package_re = re.compile(r'^node-(?P<version>[^-]+)-(?P<platform>[^-]+)-(?P<arch>[^\.]+)\.(?P<format>.+)$')
+    _version_re = re.compile(r'^v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?$')
 
-        return self._session
+    def __init__(self):
+        self.verbose = False
+        self.enable_cache = True
+        self.cache_dir = self.default_cache_dir
+        self.download_chunk_size = 10 * 1024
+        self.package_suffixes = ['.gz', '.msi', '.pkg', '.xz', '.zip']
+        self.url_prefixes = ['http://', 'https://', 'file://']
+        self.prefix = self.default_prefix
+        self.check_sys_arch = False
+        self._indices = [self.default_index]
 
-    def http_get(self, url, **kwargs):
-        echo('GET {}'.format(url))  # TODO: option to turn off
-        return self.session.get(url, **kwargs)
+    def info(self, msg):
+        click.echo(str(msg))
 
-    def get_url_dict(self, url, parse_title, ignore_parse_error=True):
-        resp = self.http_get(url)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        dct = OrderedDict()
+    def debug(self, msg):
+        if self.verbose:
+            self.info('DEBUG: {}'.format(msg))
 
-        for link in soup.find_all('a'):
-            title = link.string.strip()
-            try:
-                key = parse_title(title)
-            except ValueError:
-                if not ignore_parse_error:
-                    raise
+    def install(self, hint):
+        if hint and self.has_package_suffix(hint):
+            self.download_install_package(hint)
+            return
+
+        indices = list(self._indices)
+
+        if hint:
+            if self.is_url(hint):
+                indices = [hint]  # TODO: or just fail?
             else:
-                href = link.attrs.get('href').strip()
+                version = self.parse_version(hint)
+        else:
+            version = None
 
-                if href:
-                    dct[key] = urlparse.urljoin(resp.url, href)
+        self.debug('indices = {!r}'.format(indices))
+        self.debug('version = {!r}'.format(version))
+        self.debug('system = {!r}'.format(self.system))
+        self.debug('arch = {!r}'.format(self.architecture))
+        self.debug('fmt = {!r}'.format(self.archive_format))
 
-        return dct
+        for index in indices:
+            link = self.find_package(index, version)
 
-    @_cached_property
-    def version_url_dict(self):
+            if link:
+                self.download_install_package(link)
+                return
 
-        def parse_title(title):
-            ver = _parse_version(title, suffix='/?$')
+    def uninstall(self):
+        self.info('TODO')
 
-            if ver < self.min_version:
-                raise ValueError
+    def append_index(self, index):
+        self._indices.append(index)
 
-            return ver
+    def prepend_index(self, index):
+        self._indices.insert(0, index)
 
-        return self.get_url_dict(self.index_url, parse_title)
+    def find_package(self, index, version):
+        links = self.read_links(index)
+        verlinks = []
 
-    def get_package_url_dict(self, version_url):
-        return self.get_url_dict(version_url, self.parse_package_title)
+        for link in links:
+            ver_str = osp.basename(osp.abspath(link))  # without end /
+            try:
+                ver = self.parse_version(ver_str)
+            except ValueError:
+                pass
+            else:
+                verlinks.append((ver, link))
 
-    def parse_package_title(self, title):
-        m = re.match(r'^node-v[^-]+-(?P<platf>[^-]+)-(?P<arch>[^\.]+).(?P<fmt>.*)$', title)
+        verlinks = reversed(verlinks)
+        match = lambda a, b: a is None or a == b
+        version_link = None
 
-        if not m:
-            raise ValueError
+        for ver, link in verlinks:
+            if version is None or match(version[0], ver[0]) and match(version[1], ver[1]) and match(version[2], ver[2]):
+                version_link = link
+                break
 
-        return m.group('platf'), m.group('arch'), m.group('fmt')
+        if not version_link:
+            return
 
-    def find_version_url(self, version):
-        def version_match(actual_ver, ver):
-            if not ver:
-                return True
+        package_links = self.read_links(version_link)
 
-            if not self.match(actual_ver[0], ver[0]):
-                return False
-
-            if not self.match(actual_ver[1], ver[1]):
-                return False
-
-            return self.match(actual_ver[2], ver[2])
-
-        ver_url_dict = self.version_url_dict
-
-        for actual_version in reversed(sorted(six.iterkeys(ver_url_dict))):
-            if version_match(actual_version, version):
-                return ver_url_dict[actual_version]
+        for link in package_links:
+            try:
+                ver, system, arch, fmt = self.parse_package_name(osp.basename(link))
+            except ValueError:
+                pass
+            else:
+                if (version is None or ver == version) and system == self.system and arch == self.architecture and self.archive_format == fmt:
+                    return link
 
         return None
 
-    def iter_package_urls(self, version_url, platf, arch, fmt):
-        pkg_url_dict = self.get_package_url_dict(version_url)
 
-        for (actual_platf, actual_arch, actual_fmt), pkg_url in six.iteritems(pkg_url_dict):
-            if self.match(actual_platf, platf) and self.match(actual_arch, arch) and self.match(actual_fmt, fmt):
-                yield pkg_url
+    def read_links(self, link):
+        self.info('Reading links from {!r}'.format(link))
 
-    def match(self, actual_val, val):
-        return not val or val == actual_val
+        if self.has_package_suffix(link):
+            return [link]
 
-    def detect_platf(self):
-        mapping = [
-            (r'^windows$', 'win'),
-            # TODO: aix, sunos
-        ]
-        value = platform.system().lower()
-        return self.map(mapping, value)
+        read_html = lambda h: HtmlLinksParser(link, h).links
 
-    def detect_arch(self):
-        mapping = [
-            (r'^x86[^\d]64$', 'x64'),
-            (r'^amd64$', 'x64'),
-            (r'^x86[^\d]', 'x86'),
-            # TODO: arm64, armv6l, armv7l, ppc64, ppc64le, s390x
-        ]
-        value = platform.machine().lower()
-        return self.map(mapping, value)
+        if self.is_url(link):
+            resp = requests.get(link)
+            return read_html(resp.text)
 
-    def detect_fmt(self, platf):
-        return 'zip' if platf == 'win' else 'tar.gz'
+        try:
+            entries = os.listdir(link)
+        except EnvironmentError as e:
+            if e.errno in (errno.ENOENT, errno.ENOTDIR):
+                pass
+            else:
+                raise
+        else:
+            return sorted([osp.join(link, e) for e in entries])  # sort from file system
 
-    def map(self, mapping, value):
-        for pattern, value2 in mapping:
-            if re.match(pattern, value):
-                return value2
+        try:
+            with open(link, 'r') as f:
+                html = f.read()
+        except EnvironmentError as e:
+            if e.errno  == errno.ENOENT:
+                pass
+            else:
+                raise
+        else:
+            return read_html(html)
 
-        return value
-
-    @contextmanager
-    def download_package(self, pkg_url):
-        # TODO: verify checksum
-        filename = osp.basename(urlparse.urlparse(pkg_url).path)
-
-        with self.download_file(pkg_url) as path:
-            yield path
+    def download_install_package(self, link):
+        with self.download_package(link) as filename:
+            self.install_package(filename)
 
     @contextmanager
-    def download_file(self, url):
-        resp = self.http_get(url, stream=True)
-        total_size = resp.headers.get('content-length')
+    def download_package(self, link):
+        name = osp.basename(link)
+        self.parse_package_name(name)
 
-        with _temp_dir() as tdir:
-            path = osp.join(tdir, osp.basename(url))
-            content_length = int(resp.headers['content-length'])
+        with self._ensure_cache_dir():
+            cached_file = osp.join(self.cache_dir, name)
 
-            with open(path, 'wb') as f, click.progressbar(length=content_length) as progress:
-                for chunk in resp.iter_content(chunk_size=self.chunk_size):
-                    f.write(chunk)
-                    progress.update(self.chunk_size)
+            if osp.isfile(cached_file):
+                self.info('Using cached {!r}'.format(cached_file))
+                yield cached_file
+            elif self.is_url(link):
+                temp_fd, temp_file = tempfile.mkstemp(prefix='{}.download-'.format(name),
+                                                      dir=self.cache_dir)
+                try:
+                    self.info('Downloading {!r}'.format(link))
+                    self.debug('Downloading to temp file {!r}'.format(temp_file))
 
-            yield path
+                    with open(temp_file, 'wb') as f:
+                        resp = requests.get(link, stream=True)
+
+                        for chunk in self._iter_resp_chunks(resp):
+                            f.write(chunk)
+
+                    self.debug('Rename {!r} to {!r}'.format(temp_file, cached_file))
+                except:
+                    os.remove(temp_file)
+                    raise
+                else:
+                    os.rename(temp_file, cached_file)
+
+                yield cached_file
+            else:
+                self.info('Copying {!r}'.format(link))
+                shutil.copyfile(link, cached_file)
+                shutil.copystat(link, cached_file)
+                yield cached_file
 
     def install_package(self, package_file):
-        echo('Installing {!r} into {!r}'.format(package_file, self.node_dir))
+        version, platf, arch, fmt = self.parse_package_name(osp.basename(package_file))
 
-        with _temp_dir() as tdir:
-            if package_file.endswith('.tar.gz'):  # tar.gz
-                with tarfile.open(package_file, 'r|gz') as tar_file:
-                    # tar_file.extractall(tdir)
+        if self.check_sys_arch:
+            if platf != self.system or arch != self.architecture:
+                raise ValueError('Package {!r} is for {}-{}, not for current {}-{}'.format(
+                    package_file, platf, arch, self.system, self.architecture))
 
-                    # TESTING
-                    first_dir = osp.basename(package_file[:-7])
-                    echo('first_dir: {!r}'.format(first_dir))
+        allowed_root_files = []
 
-                    for member in tar_file:
-                        member.name = osp.relpath(member.name, first_dir)
-                        echo('extract {} -> {}'.format(member.name, sys.prefix))
-                        tar_file.extract(member, sys.prefix)
-            elif package_file.endswith('.zip'):
-                with ZipFile(package_file, 'r') as zip_file:
-                    zip_file.extractall(tdir)
+        if platf == 'win':
+            allowed_root_files.extend(['node*', 'npm*', '*.exe', '*.cmd', '*.bat'])
+
+        def is_root_file_allowed(filename):
+            for pattern in allowed_root_files:
+                if fnmatch(filename, pattern):
+                    return True
+            return False
+
+        for out_file, extract in self.iter_package_members(package_file):
+            if not osp.dirname(out_file) and not is_root_file_allowed(out_file):
+                self.debug('Skip {!r}'.format(out_file))
             else:
-                raise NotImplementedError('File format not supported: {}'.format(osp.basename(package_file)))
+                self.debug('Install {!r}'.format(osp.join(self.prefix, out_file)))
+                extract(self.prefix)
 
-            extracted_node_dir = osp.join(tdir, os.listdir(tdir)[0])
+    def iter_package_members(self, package_file):
+        tgz_suffix = '.tar.gz'
+        zip_suffix = '.zip'
 
-            # _rmtree(self.node_dir)
-            # shutil.move(extracted_node_dir, sys.prefix)
+        def iter_tgz():
+            with tarfile.open(package_file) as ar:
+                base_dir = osp.basename(package_file[:-len(tgz_suffix)])
 
-    @property
-    def installed(self):
-        return osp.exists(self.node_dir)
+                for member in ar:
+                    if not member.isdir():
+                        member.name = osp.relpath(member.name, base_dir)
+                        yield member.name, lambda p: ar.extract(member, p)
 
+        def iter_zip():
+            with zipfile.ZipFile(package_file) as ar:
+                base_dir = osp.basename(package_file[:-len(zip_suffix)])
 
-class DamNodeError(ClickException):
-    pass
+                for info in ar.infolist():
+                    if not info.filename.endswith('/'):
+                        info.filename = osp.relpath(info.filename, base_dir)
+                        yield info.filename, lambda p: ar.extract(info, p)
 
-
-class VersionType(ParamType):
-    name = 'version'
-
-    def convert(self, value, param, ctx):
-        return _parse_version(value)
-
-
-def install(args):
-    cmd_install(args, standalone_mode=False)
-
-
-def uninstall(args):
-    cmd_uninstall(args, standalone_mode=False)
-
-
-def nrun(args):
-    cmd_nrun(args, standalone_mode=False)
-
-
-def node(args):
-    nrun(['node'] + list(args))
-
-
-def npm(args):
-    nrun(['npm'] + list(args))
-
-
-@click.group()
-@click.help_option('-h', '--help')
-def cmd_main():
-    pass
-
-
-@cmd_main.command('install')
-@click.option('-p', '--platform', 'platf',
-              help='E.g. darwin, linux, win (default: current platform)')
-@click.option('-a', '--architecture', 'arch',
-              help='E.g. arm64, x64, x86 (default: current architecture)')
-@click.option('-f', '--format', 'fmt',
-              help="E.g. tar.gz, zip (default: platform's preferred format)")
-@click.option('--detect/--no-detect', 'detect',
-              default=True,
-              help='Detect platform, architecture and format (default: true)')
-@click.option('--list-versions', is_flag=True,
-              help='List available versions')
-@click.help_option('-h', '--help')
-@click.argument('version',
-                 required=False,
-                 type=VersionType())
-def cmd_install(platf, arch, fmt, detect, version, list_versions):
-    '''
-    Install Node
-
-    VERSION can be full (e.g. 8.0.0) or partial (e.g. 7.10, v6), latest
-    version will be installed if it's partial.
-    '''
-    damn = DamNode()
-
-    if list_versions:
-        for ver in reversed(sorted(damn.version_url_dict.keys())):  # TODO: damn.versions
-            echo('.'.join([str(n) for n in ver]))  # TODO: format_version()
-        return
-
-    if damn.installed:
-        raise DamNodeError("Node is already installed, you can uninstall it by running 'damnode uninstall'")
-
-    if platf is None and detect:
-        platf = damn.detect_platf()
-
-    if arch is None and detect:
-        arch = damn.detect_arch()
-
-    if fmt is None and detect:
-        fmt = damn.detect_fmt(platf)
-
-    version_url = damn.find_version_url(version)
-
-    if not version_url:
-        raise DamNodeError("Could not find the version specified, please run 'damnode install --list-versions' to see versions available")
-
-    package_urls = list(damn.iter_package_urls(version_url, platf, arch, fmt))
-
-    if not package_urls:
-        version_str = ' {}'.format(version) if version else ''  # TODO: format_version()
-        raise DamNodeError((
-            "Could not find package for {}-{} in {} format"
-            ", please run \"damnode install -p '' -a '' -f ''{}\" to see why").format(platf, arch, fmt, version_str))
-
-    if len(package_urls) > 1:
-        msg = ['More than one package found:']
-
-        for url in package_urls:
-            msg.append('\n  ')
-            msg.append(url)
-
-        raise DamNodeError(''.join(msg))
-
-    with damn.download_package(package_urls[0]) as package_file:
-        damn.install_package(package_file)
-
-    # To prevent warning: "npm is using <node>/bin/node but there is no node binary in the current PATH"
-    nrun(['npm', 'config', 'set', 'scripts-prepend-node-path', 'false'])
-
-
-@cmd_main.command('uninstall')
-@click.option('--yes', is_flag=True, help='Confirm uninstallation')
-@click.help_option('-h', '--help')
-def cmd_uninstall(yes):
-    '''
-    Uninstall Node.
-    '''
-    damn = DamNode()
-
-    if not yes:
-        click.confirm('This will remove {!r}, are you sure?'.format(damn.node_dir, abort=True))
-
-    _rmtree(damn.node_dir)
-    echo('{!r} removed'.format(damn.node_dir))
-
-
-@click.command(context_settings=dict(ignore_unknown_options=True))
-@click.help_option('-h', '--help')
-@click.option('-g', 'use_global', is_flag=True, help='Include global node_modules')
-@click.argument('node_bin', nargs=-1, type=click.UNPROCESSED)
-def cmd_nrun(use_global, node_bin):
-    damn = DamNode()
-
-    if not damn.installed:
-        raise DamNodeError("Node is not yet installed, run 'damnode install' to install it")
-
-    # FIXME: No bin directory on Windows zip
-    bin_dir = osp.join(damn.node_dir, 'bin')
-
-    if not node_bin:
-        msg = [
-            'node_bin is required\n',
-            'Please specified one:'
+        mapping = [
+            (tgz_suffix, iter_tgz),
+            (zip_suffix, iter_zip),
         ]
 
-        for bin_name in os.listdir(bin_dir):
-            msg.append('\n  ')
-            msg.append(bin_name)
+        for suffix, func in mapping:
+            if package_file.endswith(suffix):
+                return func()
 
-        raise click.BadParameter(''.join(msg))
+        return ValueError
 
-    # TODO: ./node_modules/*/bin
+    @contextmanager
+    def _ensure_cache_dir(self):
+        if self.enable_cache:
+            try:
+                os.makedirs(self.cache_dir)
+            except EnvironmentError as e:
+                if e.errno == errno.EEXIST:
+                    pass
+                else:
+                    raise
 
-    cmd = [osp.join(bin_dir, node_bin[0])]
-    cmd.extend(node_bin[1:])
+            yield
+            return
 
-    env = None
+        orig_cache_dir = self.cache_dir
+        self.cache_dir = tempfile.mkdtemp()
+        try:
+            yield
+        finally:
+            shutil.rmtree(self.cache_dir)
+            self.cache_dir = orig_cache_dir
 
-    if use_global:
-        env = {
-            'NODE_PATH': osp.join(damn.node_dir, 'lib/node_modules')
-        }
-
-    try:
-        subprocess.check_call(cmd, env=env)
-    # TODO: handle ENOENT, print list like missing node_bin
-    except CalledProcessError as e:
-        # TODO: raise SystemExit(e.returncode) if standalone_mode
-        cmdline = subprocess.list2cmdline(cmd)
-        e2 = ClickException('{!r} failed with exit code {!r}'.format(cmdline, e.returncode))
-        e2.exit_code = e.returncode
-        raise e2
-
-
-def cmd_node():
-    cmd_nrun(['node'] + sys.argv[1:])
-
-
-def cmd_npm():
-    cmd_nrun(['npm'] + sys.argv[1:])
-
-
-def _parse_version(ver_str, prefix=r'^', suffix=r'$'):
-    pattern = prefix + r'v?(?P<major>\d+)(\.(?P<minor>\d+))?(\.(?P<build>\d+))?' + suffix
-    m = re.match(pattern, ver_str)
-
-    if not m:
-        raise ValueError('Must match {}'.format(pattern))
-
-    opt_int = lambda s: None if s is None else int(s)
-    return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
-
-
-@contextmanager
-def _temp_dir():
-    dirname = tempfile.mkdtemp()
-    try:
-        yield dirname
-    finally:
-        _rmtree(dirname)
-
-
-def _rmtree(path):
-    try:
-        shutil.rmtree(path)
-    except OSError as e:
-        if e.errno == errno.ENOENT:
-            pass  # does not exist
+    def _iter_resp_chunks(self, resp):
+        chunk_size = self.download_chunk_size
+        try:
+            content_length = int(resp.headers.get('content-length', ''))
+        except ValueError:
+            # No Content-Length, no progress
+            for chunk in resp.iter_content(chunk_size=chunk_size):
+                yield chunk
         else:
+            # Got Content-Length, show progress bar
+            with click.progressbar(length=content_length) as progress:
+                for chunk in resp.iter_content(chunk_size=chunk_size):
+                    yield chunk
+                    progress.update(chunk_size)
+
+    def is_url(self, link):
+        for prefix in self.url_prefixes:
+            if link.startswith(prefix):
+                return True
+
+        return False
+
+    def has_package_suffix(self, link):
+        for suffix in self.package_suffixes:
+            if link.endswith(suffix):
+                return True
+
+        return False
+
+    def parse_package_name(self, name):
+        if not self.has_package_suffix(name):
+            raise ValueError('Invalid package name {!r}, suffix must be one of {!r}'.format(
+                name, self.package_suffixes))
+
+        m = self._package_re.match(name)
+
+        if not m:
+            raise ValueError('Invalid package name {!r}, it does not match regex {}'.format(
+                name, self._package_re.pattern))
+
+        version = self.parse_version(m.group('version'))
+        platf = m.group('platform')  # TODO: -> system
+        arch = m.group('arch')
+        fmt = m.group('format')
+        return version, platf, arch, fmt
+
+    def parse_version(self, name):
+        m = self._version_re.match(name)
+
+        if not m:
+            raise ValueError('Invalid version {!r}, it does not match regex {}'.format(
+                name, self._version_re.pattern))
+
+        opt_int = lambda i: None if i is None else int(i)
+        return int(m.group('major')), opt_int(m.group('minor')), opt_int(m.group('build'))
+
+    @cached_property
+    def system(self):
+        return self._get_system(platform.system())
+
+    def _get_system(self, value):
+        value = value.lower()
+
+        dct = {
+            'solaris': 'sunos',
+            'windows': 'win',
+        }
+        return dct.get(value, value)
+
+    @cached_property
+    def archive_format(self):
+        return 'zip' if self.system == 'win' else 'tar.gz'
+
+    @cached_property
+    def architecture(self):
+        return self._get_compatible_arch(platform.machine(), platform.processor())
+
+    def _get_compatible_arch(self, machine, processor):
+        patterns = [
+            (r'^i686-64$', 'x64'),
+            (r'^i686', 'x86'),
+            (r'^x86_64$', 'x64'),
+            (r'^amd64$', 'x64'),
+            (r'^ppc$', 'ppc64'),
+            (r'^powerpc$', 'ppc64'),
+            (r'^aarch64$', 'arm64'),
+            (r'^s390', 's390x'),
+        ]
+        simpify = lambda v: '' if v is None else v.lower()
+        machine = simpify(machine)
+        processor = simpify(processor)
+
+        for patt, arch in patterns:
+            pattc = re.compile(patt)
+
+            if pattc.match(machine) or pattc.match(processor):
+                return arch
+
+        return machine
+
+
+class HtmlLinksParser(HTMLParser):
+    def __init__(self, url, html):
+        HTMLParser.__init__(self)
+        self.links = []
+        self.url = url
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() != 'a':
+            return
+
+        for name, value in attrs:
+            if name.lower() != 'href':
+                continue
+
+            value = value.strip()
+
+            if not value:
+                continue
+
+            path = urlparse.urljoin(self.url, value)
+            self.links.append(path)
+
+
+class DamnodeCommand(click.Group):
+    def invoke(self, ctx):
+        damnode = Damnode()
+        ctx.obj = damnode
+        try:
+            return super(DamnodeCommand, self).invoke(ctx)
+        except (ClickException, click.Abort):
             raise
+        except Exception as e:
+            if damnode.verbose:
+                traceback.print_exc()
+                raise
+            else:
+                msg = '\n'.join([str(e), 'Provide -v to see full stack trace'])
+                raise ClickException(msg)
 
 
-if __name__ == '__main__':
-    cmd_main()
+@click.command(cls=DamnodeCommand)
+@click.help_option('-h', '--help')
+@click.option('-v', '--verbose',
+              is_flag=True,
+              default=False,
+              help='Verbose output')
+@click.pass_obj
+def main(damnode, verbose):
+    damnode.verbose = verbose
+
+
+@main.command()
+@click.help_option('-h', '--help')
+@click.option('-i', '--index',
+              multiple=True,
+              help='Node index directory or URL (default: {!r})'.format(Damnode.default_index))
+@click.option('--no-cache', is_flag=True,
+              help='Do not cache downloads')
+@click.option('--cache-dir',
+              help='Directory to cache downloads (default: {!r})'.format(Damnode.default_cache_dir))
+@click.option('--prefix', help='Prefix directory to install to (default: {!r})'.format(Damnode.default_prefix))
+@click.argument('hint', required=False)
+@click.pass_obj
+def install(damnode, index, no_cache, cache_dir, prefix, hint):
+    '''
+    Install Node of latest version or from the given HINT, it is detected as follows:
+
+    \b
+    1. Exact version (e.g. 7.9.0, v7.10.0), v doesn't matter
+    2. Partial version (e.g. v8, 8.1), latest version will be selected
+    3. Package file (e.g. ~/Downloads/node-v6.11.0-darwin-x64.tar.gz)
+    4. Package URL (e.g. https://nodejs.org/dist/v4.8.3/node-v4.8.3-linux-x64.tar.gz)
+    5. Packages directory (e.g. /var/www/html/node/v5.12.0/)
+    6. Version URL (e.g. https://nodejs.org/dist/v5.12.0/)
+
+    Only tar.gz and zip formats are supported.
+    '''
+    if index:
+        damnode.prepend_index(index)
+
+    if no_cache:
+        damnode.enable_cache = False
+
+    if cache_dir:
+        damnode.cache_dir = cache_dir
+
+    if prefix:
+        damnode.prefix = prefix
+
+    damnode.install(hint)
+
+
+@main.command()
+@click.help_option('-h', '--help')
+@click.confirmation_option('--yes',
+                           help='Confirm uninstallation',
+                           prompt='This will remove Node and only its bundled node_modules, continue?')
+@click.pass_obj
+def uninstall(damnode):
+    damnode.uninstall()

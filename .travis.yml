@@ -12,7 +12,7 @@ install:
 - python setup.py --url --version
 - pip install .
 
-script: ./test
+script: ./test.sh
 
 deploy:
   - provider: pypi

@@ -42,15 +42,10 @@ def main():
         ],
         'entry_points': {
             'console_scripts': [
-                'damnode=damnode:cmd_main',
-                'nrun=damnode:cmd_nrun',
-                'node=damnode:cmd_node',
-                'npm=damnode:cmd_npm',
-
-                'damnode2=damnode2:main',
+                'damnode=damnode:main',
             ],
         },
-        'test_suite': 'testdamnode',
+        'test_suite': 'test',
         'zip_safe': False,
         'classifiers': [
             'Development Status :: 3 - Alpha',
