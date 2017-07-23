@@ -56,6 +56,7 @@ class Damnode(object):
         self.url_prefixes = ['http://', 'https://', 'file://']
         self.prefix = self.default_prefix
         self.check_sys_arch = False
+        self._indices = [self.default_index]
 
     def info(self, msg):
         click.echo(str(msg))
@@ -69,17 +70,16 @@ class Damnode(object):
             self.download_install_package(hint)
             return
 
-        indices = []
+        indices = list(self._indices)
 
         if hint:
             if self.is_url(hint):
-                indices.append(hint)
+                indices = [hint]  # TODO: or just fail?
             else:
                 version = self.parse_version(hint)
         else:
             version = None
 
-        indices.append(self.default_index)
         self.debug('indices = {!r}'.format(indices))
         self.debug('version = {!r}'.format(version))
         self.debug('system = {!r}'.format(self.system))
@@ -87,7 +87,7 @@ class Damnode(object):
         self.debug('fmt = {!r}'.format(self.archive_format))
 
         for index in indices:
-            link = find_package(index, version)
+            link = self.find_package(index, version)
 
             if link:
                 self.download_install_package(link)
@@ -96,8 +96,50 @@ class Damnode(object):
     def uninstall(self):
         self.info('TODO')
 
+    def append_index(self, index):
+        self._indices.append(index)
+
+    def prepend_index(self, index):
+        self._indices.insert(0, index)
+
     def find_package(self, index, version):
-        raise NotImplementedError('TODO')
+        links = self.read_links(index)
+        verlinks = []
+
+        for link in links:
+            ver_str = osp.basename(osp.abspath(link))  # without end /
+            try:
+                ver = self.parse_version(ver_str)
+            except ValueError:
+                pass
+            else:
+                verlinks.append((ver, link))
+
+        verlinks = reversed(verlinks)
+        match = lambda a, b: a is None or a == b
+        version_link = None
+
+        for ver, link in verlinks:
+            if version is None or match(version[0], ver[0]) and match(version[1], ver[1]) and match(version[2], ver[2]):
+                version_link = link
+                break
+
+        if not version_link:
+            return
+
+        package_links = self.read_links(version_link)
+
+        for link in package_links:
+            try:
+                ver, system, arch, fmt = self.parse_package_name(osp.basename(link))
+            except ValueError:
+                pass
+            else:
+                if (version is None or ver == version) and system == self.system and arch == self.architecture and self.archive_format == fmt:
+                    return link
+
+        return None
+
 
     def read_links(self, link):
         self.info('Reading links from {!r}'.format(link))
@@ -296,7 +338,7 @@ class Damnode(object):
                 name, self._package_re.pattern))
 
         version = self.parse_version(m.group('version'))
-        platf = m.group('platform')
+        platf = m.group('platform')  # TODO: -> system
         arch = m.group('arch')
         fmt = m.group('format')
         return version, platf, arch, fmt
@@ -393,7 +435,8 @@ class DamnodeCommand(click.Group):
                 traceback.print_exc()
                 raise
             else:
-                raise ClickException(str(e))
+                msg = '\n'.join([str(e), 'Provide -v to see full stack trace'])
+                raise ClickException(msg)
 
 
 @click.command(cls=DamnodeCommand)
@@ -434,7 +477,7 @@ def install(damnode, index, no_cache, cache_dir, prefix, hint):
     Only tar.gz and zip formats are supported.
     '''
     if index:
-        damnode.indices = index
+        damnode.prepend_index(index)
 
     if no_cache:
         damnode.enable_cache = False

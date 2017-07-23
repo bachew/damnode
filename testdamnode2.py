@@ -39,6 +39,25 @@ class LinkTest(TestCase):
         d = create_damnode()
         self.assertEqual(['node-v6.xz'], d.read_links('node-v6.xz'))
 
+    # TODO: thorough test
+    def test_find_package(self):
+        d = TestDamnode()
+        link = d.find_package(data_dir('find-package-index'), (7, 10, 1))
+        exp_link = data_dir('find-package-index/v7.10.1/node-v7.10.1-linux-x64.tar.gz')
+        self.assertEqual(exp_link, link)
+
+    def test_find_latest_package(self):
+        d = TestDamnode()
+        link = d.find_package(data_dir('find-package-index'), None)
+        exp_link = data_dir('find-package-index/v8.2.1/node-v8.2.1-linux-x64.tar.gz')
+        self.assertEqual(exp_link, link)
+
+    def test_find_remote_package(self):
+        d = TestDamnode()
+        link = d.find_package(TestDamnode.default_index, (7, 10, 1))
+        self.assertIsNotNone(link)
+        self.assertRegexpMatches(link, r'node-v7\.10\.1-linux-x64\.tar\.gz$')
+
 
 class NameTest(TestCase):
     def test_has_package_suffix(self):
@@ -222,6 +241,15 @@ class InstallTest(TestCase):
         d.download_install_package(url)
 
     # TODO: test uninstall
+
+
+class TestDamnode(Damnode):
+    system = 'linux'
+    architecture = 'x64'
+
+    def __init__(self):
+        super(TestDamnode, self).__init__()
+        self.cache_dir = data_dir('cache')
 
 
 def data_dir(*path):
