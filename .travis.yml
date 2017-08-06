@@ -19,7 +19,7 @@ script: ./test.sh
 deploy:
   - provider: pypi
     distributions: sdist bdist_wheel
-    server: https://testpypi.python.org/pypi
+    server: https://test.pypi.org/legacy/
     user: bachew
     password:
       secure: mzMPDj0HABunqGIGOGNIXtZMsV/JRfGkqUMNimJAXwGU2TuK9ODt6XT6uB6lWnu/PE+iVzcgH19mHog/+Kd8DhX1yAW6Ixh5ZsNnRIK3x/xmNtIbYOULJbLBURVLFrHetmWldeHvwVT5HBlCCbqUx7TRKMJNdnEBwsDvv68SkUntUsE3yc34hsu7SyAN+/E2cecpf4PmyNpd1Jft5dPDtPE+unx23ZcIV1SeZeTJmNagzt0UvLM5ozZ8qzoTs51pY6IHTNZtb44pEWHnx6Sr5MR6nzqU2NIpgdWdyJqdrXIyByhAnTsTgeNSOIRH2pyEGlXSc7GjkAdOIeKb7WFBS3JMPBVwbCcQvSmoLt/GHWcGjjz/+Sz/LmqBd1oF40S9jYgpHY30rX9AeyrREA1vBSi3CWwcgP65WfLXqtPfOl3PLjt44/+FQmA3nX2Spu4DZC1lYAsC9iWPCXMVjtNPlfYvKKA0DrVkUua2Hh/Im+H/bgudyLeVY203i60b+9w4MvnUUi9uSdAlSVDuyYKMips5/d99rm2cdtOXbAJOSx3a83aIp0DaPvSH0GUpkXTTCpOgqDroHG9jcOrLo2jUtWbKNz9Efxw9GK0EVxm6D3mY+HhOq73xC35VneKqixeRin/saQE+ZvlYhpnEtsCt1JJkhUDcS9Ui4S+wrcC4RSY=
