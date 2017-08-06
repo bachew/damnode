@@ -10,3 +10,5 @@
 Node.js in Python virtual environments
 
 DamNode allows you to easily install and use Node.js in Python virtual environments.
+
+TODO: Clean up tests, use PyTest and Tox, implement uninstall

@@ -1,0 +1,3 @@
+[console_scripts]
+damnode = damnode.cli:main
+

@@ -6,7 +6,7 @@ import subprocess
 import textwrap
 import time
 from os import path as osp
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 def main():
@@ -26,8 +26,8 @@ def main():
         'author_email': 'bachew@gmail.com',
         'url': home_url,
         'download_url': 'https://github.com/bachew/damnode/archive/{}.zip'.format(brtag),
-
-        'py_modules': ['damnode'],
+        'packages': find_packages('src'),
+        'package_dir': {'': 'src'},
         'setup_requires': [
             'wheel',
         ],
@@ -36,13 +36,10 @@ def main():
             'Click>=6.7',
             'requests>=2.17.3',
             'six>=1.10.0',
-
-            'beautifulsoup4',
-            'cachecontrol[filecache]',
         ],
         'entry_points': {
             'console_scripts': [
-                'damnode=damnode:main',
+                'damnode=damnode.cli:main',
             ],
         },
         'test_suite': 'test',
