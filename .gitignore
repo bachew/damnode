@@ -1,12 +1,13 @@
+.*
 *.pyc
 __pycache__
+*.egg-info
 node_modules
 
 *.sublime-project
 *.sublime-workspace
 
-/.eggs
-/*.egg*
+/.egg
 /dist
 /build
 /test.d/cache*

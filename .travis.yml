@@ -9,6 +9,8 @@ python:
 - '3.6'
 
 install:
+- pip install -U pip
+- pip install -U setuptools
 - python setup.py --url --version
 - pip install .
 
