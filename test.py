@@ -199,7 +199,7 @@ class DownloadTest(TestCase):
         unused_cache_dir = data_dir('cache3')
         d.cache_dir = unused_cache_dir
 
-        with d.download_package(data_dir('cache/node-v6.11.0-win-x64.zip')) as filename:
+        with d.download_package(data_dir('local-index/node-v8.1.2-linux-arm64.tar.gz')) as filename:
             self.assertNotEqual(unused_cache_dir, d.cache_dir)
             self.assertTrue(filename.startswith(d.cache_dir))
 
