@@ -1,4 +1,4 @@
-# DamNode
+# Damnode
 
 [![Build](https://travis-ci.org/bachew/damnode.svg?branch=master)](https://travis-ci.org/bachew/damnode)
 [![Python](https://img.shields.io/pypi/pyversions/damnode.svg)]()
@@ -9,6 +9,6 @@
 
 Node.js in Python virtual environments
 
-DamNode allows you to easily install and use Node.js in Python virtual environments.
+Damnode allows you to easily install and use Node.js in Python virtual environments.
 
 TODO: Clean up tests, use PyTest and Tox, implement uninstall

@@ -32,7 +32,7 @@ def main():
             'wheel',
         ],
         'install_requires': [
-            'appdirs>=1.4.0'
+            'appdirs>=1.4.0',
             'Click>=6.7',
             'requests>=2.17.3',
             'six>=1.10.0',
