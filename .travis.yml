@@ -1,5 +1,6 @@
 language: python
 
+# Keep in sync with setup.py classifiers
 python:
 - '2.7'
 - '3.3'
@@ -8,9 +9,10 @@ python:
 - '3.6'
 
 install:
+- python setup.py --url --version
 - pip install .
 
-script: python setup.py test
+script: ./test.sh
 
 deploy:
   - provider: pypi

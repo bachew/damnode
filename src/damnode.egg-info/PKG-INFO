@@ -1,0 +1,28 @@
+Metadata-Version: 1.1
+Name: damnode
+Version: 0.dev1501997664
+Summary: Node.js in Python virtual environments
+Home-page: https://github.com/bachew/damnode/tree/0.0.2.dev
+Author: Chew Boon Aik
+Author-email: bachew@gmail.com
+License: MIT
+Download-URL: https://github.com/bachew/damnode/archive/0.0.2.dev.zip
+Description: DamNode allows you to easily install and use Node.js in Python virtual environments.
+        
+        Go to `project page <https://github.com/bachew/damnode/tree/0.0.2.dev#damnode>`_ for more info.
+        
+Platform: UNKNOWN
+Classifier: Development Status :: 3 - Alpha
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 2.7
+Classifier: Programming Language :: Python :: 3.3
+Classifier: Programming Language :: Python :: 3.4
+Classifier: Programming Language :: Python :: 3.5
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Topic :: Software Development :: Build Tools
+Classifier: Topic :: Utilities

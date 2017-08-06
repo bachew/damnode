@@ -1,0 +1,12 @@
+setup.cfg
+setup.py
+src/damnode/__init__.py
+src/damnode/cli.py
+src/damnode/core.py
+src/damnode.egg-info/PKG-INFO
+src/damnode.egg-info/SOURCES.txt
+src/damnode.egg-info/dependency_links.txt
+src/damnode.egg-info/entry_points.txt
+src/damnode.egg-info/not-zip-safe
+src/damnode.egg-info/requires.txt
+src/damnode.egg-info/top_level.txt

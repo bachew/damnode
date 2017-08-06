@@ -5,11 +5,12 @@ node_modules
 *.sublime-project
 *.sublime-workspace
 
-/*.egg-info
-/build
+/.eggs
+/*.egg*
 /dist
+/build
+/test.d/cache*
 
-/node
 /tmp
 /vn2
 /vn3
