@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+from __future__ import print_function
+import os
+import sys
+import subprocess
+from argparse import ArgumentParser
+from os import path as osp
+
+
+PIP_VERSION = '>=9.0.1'
+SETUPTOOLS_VERSION = '>=36.0.1'
+BASE_DIR = osp.dirname(osp.abspath(__file__))
+VENV_PROMPT = 'damnode'
+VENV_DIR = 'venv'
+
+
+def main():
+    parser = ArgumentParser()
+    default_py_version = str(sys.version_info[0])
+    parser.add_argument('-p', '--python',
+                        choices=['2', '3'],
+                        default=default_py_version,
+                        help='Python version of the virtual env (default: {})'.format(
+                            default_py_version))
+    args = parser.parse_args()
+    py_version = args.python
+
+    os.chdir(BASE_DIR)
+
+    in_venv = detect_inside_venv()
+    pip = 'pip'
+
+    if not in_venv:
+        info('Not inside virtual env, creating one')
+        venv_dir = create_venv(py_version)
+        pip = osp.join(venv_dir, 'bin', 'pip')
+
+    run([pip, 'install', 'pip{}'.format(PIP_VERSION)])
+    run([pip, 'install', 'setuptools{}'.format(SETUPTOOLS_VERSION)])
+    run([pip, 'install', '-e', '.'])
+
+    if not in_venv:
+        info("Run 'source {}' to activate virtual env".format(venv_dir))
+
+
+def detect_inside_venv():
+    # TODO: check sys.real_prefix and sys.base_prefix
+    return False
+
+
+def create_venv(python_version):
+    prompt = '({}-py{}) '.format(VENV_PROMPT, python_version)
+    venv_dir = '{}-py{}'.format(VENV_DIR, python_version)
+    mapping = {
+        '2': create_py2_venv,
+        '3': create_py3_venv,
+    }
+    mapping[python_version](prompt, venv_dir)
+    return venv_dir
+
+
+def create_py2_venv(prompt, venv_dir):
+    run(['virtualenv', '--prompt', prompt, venv_dir])
+
+
+def create_py3_venv(prompt, venv_dir):
+    # TODO: set prompt if python>=3.6
+    run(['python3', '-m', 'venv', venv_dir])
+
+
+def run(cmd):
+    cmdline = subprocess.list2cmdline(cmd)
+    info(cmdline)
+    # TESTING
+    # subprocess.check_call(cmd)
+
+
+def info(msg):
+    print(msg)
+    sys.stdout.flush()
+
+
+if __name__ == '__main__':
+    main()
