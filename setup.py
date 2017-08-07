@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 home_url = 'https://github.com/bachew/damnode/tree/master'
 config = {
     'name': 'damnode',
-    'version': '0.0.3dev',
+    'version': '0.0.3',
     'description': 'Node.js in Python virtual environments',
     'long_description': 'Go to `project page <{}#damnode>`_ for more info.'.format(home_url),
     'license': 'MIT',
