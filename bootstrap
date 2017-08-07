@@ -9,24 +9,22 @@ from os import path as osp
 
 
 DEFAULT_PY_VERSION = '3'
+VENV_TITLE = 'damnode'
+VENV_BASENAME = 'venv'
 INDEX_URL = None
 EXTRA_INDEX_URL = None
 PIP_VERSION = '>=9.0.1'
 SETUPTOOLS_VERSION = '>=36.0.1'
-VENV_TITLE = 'damnode'
-VENV_BASENAME = 'venv'
 
 
 class VenvCreator(object):
-    def prepare(self, py_version):
+    def __init__(self, py_version):
         if py_version == DEFAULT_PY_VERSION:
-            venv_dir = VENV_BASENAME
-            prompt = '({}) '.format(VENV_TITLE)
+            self.venv_dir = VENV_BASENAME
+            self.prompt = '({}) '.format(VENV_TITLE)
         else:
-            venv_dir = '{}-py{}'.format(VENV_BASENAME, py_version)
-            prompt = '({}-py{}) '.format(VENV_TITLE, py_version)
-
-        return prompt, venv_dir
+            self.venv_dir = '{}-py{}'.format(VENV_BASENAME, py_version)
+            self.prompt = '({}-py{}) '.format(VENV_TITLE, py_version)
 
     def create(self):
         raise NotImplementedError
@@ -34,24 +32,20 @@ class VenvCreator(object):
 
 class Py2VenvCreator(VenvCreator):
     def create(self):
-        prompt, venv_dir = self.prepare('2')
-        run(['virtualenv', '--prompt', prompt, venv_dir])
-        return venv_dir
+        run(['virtualenv', '--prompt', self.prompt, self.venv_dir])
 
 
 class Py3VenvCreator(VenvCreator):
     def create(self):
-        prompt, venv_dir = self.prepare('3')
         # TODO: set prompt if python>=3.6
-        run(['python3', '-m', 'venv', venv_dir])
-        return venv_dir
+        run(['python3', '-m', 'venv', self.venv_dir])
 
 
 def main():
     parser = ArgumentParser()
     venv_creator_dict = {
-        '2': Py2VenvCreator(),
-        '3': Py3VenvCreator()
+        '2': Py2VenvCreator('2'),
+        '3': Py3VenvCreator('3')
     }
     parser.add_argument('-p', '--python',
                         choices=sorted(venv_creator_dict.keys()),
@@ -61,21 +55,31 @@ def main():
     parser.add_argument('-U', '--upgrade',
                         action='store_true',
                         help='Upgrade packages')
+    parser.add_argument('--dev',
+                        action='store_true',
+                        help='Install requirements-dev.txt')
     args = parser.parse_args()
 
     base_dir = osp.dirname(osp.abspath(__file__))
     os.chdir(base_dir)
 
     base_prefix = getattr(sys, 'real_prefix', None) or getattr(sys, 'base_prefix', sys.prefix)
+    new_venv_dir = None
+    pip = 'pip'
 
     if base_prefix == sys.prefix:
         info('Not inside virtual env')
-        new_venv_dir = venv_creator_dict[args.python].create()
+        venv_creator = venv_creator_dict[args.python]
+        venv_creator.create()
+        new_venv_dir = venv_creator.venv_dir
         pip = osp.join(new_venv_dir, 'bin', 'pip')
     else:
         info('Inside virtual env {!r}'.format(sys.prefix))
-        new_venv_dir = None
-        pip = 'pip'
+        sys_py_version = str(sys.version_info[0])
+
+        if sys_py_version != args.python:
+            raise RuntimeError('Virtual env Python version {!r} does not match requested version {!r}'.format(
+                sys_py_version, args.python))
 
     pip_install = [pip, 'install']
 
@@ -92,8 +96,11 @@ def main():
     run(pip_install + ['setuptools{}'.format(SETUPTOOLS_VERSION)])
     run(pip_install + ['-e', '.'])
 
+    if args.dev:
+        run(pip_install + ['-r', 'requirements-dev.txt'])
+
     if new_venv_dir:
-        info("Run 'source {}' to activate virtual env".format(
+        info("\nRun 'source {}' to activate virtual env".format(
             osp.join(new_venv_dir, 'bin', 'activate')))
 
 
