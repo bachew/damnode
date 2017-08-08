@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
 import os
+import shutil
 import sys
 import subprocess
 from argparse import ArgumentParser
@@ -52,9 +53,9 @@ def main():
                         default=DEFAULT_PY_VERSION,
                         help='Python version of the virtual env to create (default: {})'.format(
                             DEFAULT_PY_VERSION))
-    parser.add_argument('-U', '--upgrade',
+    parser.add_argument('--clean',
                         action='store_true',
-                        help='Upgrade packages')
+                        help='Clean before creating virtual env')
     parser.add_argument('--dev',
                         action='store_true',
                         help='Install requirements-dev.txt')
@@ -70,8 +71,13 @@ def main():
     if base_prefix == sys.prefix:
         info('Not inside virtual env')
         venv_creator = venv_creator_dict[args.python]
-        venv_creator.create()
         new_venv_dir = venv_creator.venv_dir
+
+        if args.clean and osp.exists(new_venv_dir):
+            info('Removing {!r}'.format(new_venv_dir))
+            shutil.rmtree(new_venv_dir)
+
+        venv_creator.create()
         pip = osp.join(new_venv_dir, 'bin', 'pip')
     else:
         info('Inside virtual env {!r}'.format(sys.prefix))
@@ -81,10 +87,10 @@ def main():
             raise RuntimeError('Virtual env Python version {!r} does not match requested version {!r}'.format(
                 sys_py_version, args.python))
 
-    pip_install = [pip, 'install']
+        if args.clean:
+            raise RuntimeError('Cannot clean virtual env while inside it')
 
-    if args.upgrade:
-        pip_install.append('-U')
+    pip_install = [pip, 'install']
 
     if INDEX_URL:
         pip_install += ['-i', INDEX_URL]
