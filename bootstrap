@@ -100,7 +100,12 @@ def main():
 
     run(pip_install + ['pip{}'.format(PIP_VERSION)])
     run(pip_install + ['setuptools{}'.format(SETUPTOOLS_VERSION)])
-    run(pip_install + ['-e', '.'])
+
+    if osp.exists('setup.py'):
+        run(pip_install + ['-e', '.'])
+
+    if osp.exists('requirements.txt'):
+        run(pip_install + ['-r', 'requirements.txt'])
 
     if args.dev:
         run(pip_install + ['-r', 'requirements-dev.txt'])
