@@ -1,0 +1,9 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+damnode = {path = ".", editable = true}
+invoke = ">=1.0.0"
+pytest = "*"
