@@ -26,7 +26,6 @@ config = {
             'damnode=damnode.cli:main',
         ],
     },
-    'test_suite': 'test',
     'zip_safe': False,
     'classifiers': [
         'Development Status :: 3 - Alpha',

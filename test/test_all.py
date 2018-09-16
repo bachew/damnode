@@ -253,7 +253,7 @@ class TestDamnode(Damnode):
 
 
 def data_dir(*path):
-    return osp.abspath(osp.join(osp.dirname(__file__), 'test.d', *path))
+    return osp.abspath(osp.join(osp.dirname(__file__), '..', 'test.d', *path))
 
 
 def create_damnode():
